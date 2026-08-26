@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from xora_chart.application.overlays import build_overlays
 from xora_chart.domain.enums import Direction, Side
 from xora_chart.domain.models import Candle, CandleWindow, PatternMatch, TradeLevels
 
@@ -163,7 +164,7 @@ def _phase_double_bottom(candles: list[Candle], last: float) -> tuple[str, str]:
 def _phase_flag(candles: list[Candle], last: float, bullish: bool) -> tuple[str, str]:
     closes = [c.close for c in candles]
     mid = len(closes) // 2
-    first, second = closes[:mid], closes[mid:]
+    first = closes[:mid]
     impulse_end = first[-1] if first else last
     flag_hi = max(c.high for c in candles[mid:]) if mid else last
     flag_lo = min(c.low for c in candles[mid:]) if mid else last
@@ -185,7 +186,6 @@ def _phase_flag(candles: list[Candle], last: float, bullish: bool) -> tuple[str,
             f"After the impulse toward {impulse_end:.6g}, price is coiling between {flag_lo:.6g} and {flag_hi:.6g} "
             f"(~{pos*100:.0f}% of the flag range). A break above {flag_hi:.6g} triggers the long continuation.",
         )
-    # bear flag
     if last < flag_lo * 0.999:
         return (
             "breaking down out of the flag",
@@ -205,7 +205,6 @@ def _phase_flag(candles: list[Candle], last: float, bullish: bool) -> tuple[str,
 
 
 def _phase_pennant(candles: list[Candle], last: float, bullish: bool) -> tuple[str, str]:
-    # same geometry language as flag but emphasize apex / coil
     phase, detail = _phase_flag(candles, last, bullish)
     detail = detail.replace("flag", "pennant")
     if "inside" in phase:
@@ -291,7 +290,6 @@ def _phase_cup_handle(candles: list[Candle], last: float) -> tuple[str, str]:
 
 
 def detect_pattern_phase(window: CandleWindow, pattern_key: str) -> dict:
-    """Where price sits inside the matched pattern right now."""
     if not window.candles:
         return {"phase": "unknown", "detail": "No candles", "label": "Unknown"}
 
@@ -387,6 +385,7 @@ def build_analysis(
     )
     direction = "bullish" if match.direction == Direction.BULLISH else "bearish"
     position = detect_pattern_phase(window, match.pattern_key)
+    overlays = build_overlays(window, match.pattern_key)
 
     summary = (
         f"{window.symbol} scored {match.similarity:.1f}% similarity to {match.pattern_name} "
@@ -422,6 +421,7 @@ def build_analysis(
         "why_this_trade": why_trade,
         "levels_explanation": levels,
         "validation": validation_note or "",
+        "chart_overlays": overlays,
     }
 
     narrative_parts = [
