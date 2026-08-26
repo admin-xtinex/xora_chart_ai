@@ -21,16 +21,45 @@ echo "Deployment status:"
 docker compose --env-file .env.production -f docker-compose.prod.yml ps
 
 echo
-echo "Health check:"
+echo "WebSocket health check:"
 for i in {1..12}; do
-  if curl -fsS http://127.0.0.1/api/v1/health >/dev/null; then
-    curl -fsS http://127.0.0.1/api/v1/health
-    echo
-    exit 0
+  if docker compose --env-file .env.production -f docker-compose.prod.yml exec -T backend \
+    python - <<'PY'
+import asyncio
+import json
+import sys
+import websockets
+
+async def main():
+    async with websockets.connect("ws://127.0.0.1:8030/ws", open_timeout=5) as ws:
+        await ws.recv()  # ready frame
+        await ws.send(json.dumps({"id": "deploy-health", "action": "health", "payload": {}}))
+        msg = json.loads(await ws.recv())
+        data = msg.get("data") or {}
+        ok = (
+            msg.get("ok") is True
+            and data.get("transport") == "websocket-only"
+            and data.get("market_data") == "binance-websocket-only"
+            and data.get("rest_market_data") is False
+            and data.get("reference_gate") is True
+            and int(data.get("reference_images") or 0) >= 10
+        )
+        print(json.dumps(data, indent=2))
+        if not ok:
+            sys.exit(1)
+
+asyncio.run(main())
+PY
+  then
+    HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+    if [[ "$HOME_CODE" == "200" ]]; then
+      echo "WebSocket backend and frontend are healthy."
+      exit 0
+    fi
   fi
   sleep 5
 done
 
-echo "Health check did not become ready. Inspect logs with:"
+echo "WebSocket health check did not become ready. Inspect logs with:"
 echo "docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=200"
 exit 1
