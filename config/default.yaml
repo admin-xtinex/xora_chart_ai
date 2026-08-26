@@ -1,0 +1,41 @@
+cycle:
+  interval_seconds: 60
+  enabled: true
+
+discovery:
+  top_gainers: 5
+  top_losers: 5
+  top_volume: 5
+  trending: 5
+  # total target ≈ 20 (duplicates collapsed)
+  quote_asset: USDT
+  min_quote_volume: 500000   # filter dust
+
+market_data:
+  interval: "1m"
+  candle_limit: 100
+  venue: binance_futures
+
+matcher:
+  min_similarity: 60.0       # below this → drop
+  ai_threshold: 80.0         # only call AI above this
+  max_matches_per_symbol: 3
+
+trade:
+  default_rr_targets: [1.5, 2.5, 3.5]
+  min_risk_reward: 1.5
+
+ranking:
+  top_n: 10
+  weights:
+    similarity: 0.45
+    confidence: 0.30
+    risk_reward: 0.25
+
+ai:
+  enabled: false             # Phase 2 skeleton — enable in Phase 3
+  provider: "none"
+
+store:
+  max_cycles_kept: 50
+  max_opportunities_kept: 200
