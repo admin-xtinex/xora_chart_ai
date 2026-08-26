@@ -1,14 +1,14 @@
-"""Binance Futures market data — WebSocket primary + one-shot history seed.
+"""Binance Futures market data — WebSocket only.
 
-Live path (WS):
+Hard invariant: this module never calls Binance REST/HTTP endpoints.
+All market observations used by XORA originate from WebSocket streams:
   - !ticker@arr
   - <symbol>@kline_1m
   - <symbol>@depth20@100ms
   - <symbol>@markPrice@1s
 
-Bootstrap (HTTP once per symbol when buffer empty):
-  - GET /fapi/v1/klines  — fills last N closed candles so scans work immediately.
-  After seed, WS keeps the buffer updated. No polling loop on REST.
+Closed candles are persisted locally so a restart can reuse observations that
+were originally received over WebSocket. No HTTP history bootstrap exists.
 """
 
 from __future__ import annotations
@@ -16,10 +16,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import time
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Any
 
-import httpx
 import websockets
 
 from xora_chart.domain.models import Candle, CandleWindow, DiscoveredCoin
@@ -27,8 +29,9 @@ from xora_chart.domain.models import Candle, CandleWindow, DiscoveredCoin
 log = logging.getLogger(__name__)
 
 WS_BASE = "wss://fstream.binance.com"
-FAPI = "https://fapi.binance.com"
 MAX_CANDLES = 120
+MIN_CANDLES = 20
+STATE_PATH = Path(os.getenv("XORA_WS_STATE_PATH", "/app/state/ws_market.json"))
 
 
 class BinanceWSHub:
@@ -37,13 +40,15 @@ class BinanceWSHub:
     def __init__(self) -> None:
         self._tickers: dict[str, dict[str, Any]] = {}
         self._candles: dict[str, deque[Candle]] = defaultdict(lambda: deque(maxlen=MAX_CANDLES))
-        self._seeded: set[str] = set()
         self._books: dict[str, dict[str, Any]] = {}
         self._mark: dict[str, dict[str, Any]] = {}
         self._desired_symbols: set[str] = set()
         self._watchlist_version = 0
         self._task: asyncio.Task | None = None
         self._running = False
+        self._connected = False
+        self._last_message_monotonic: float | None = None
+        self._load_ws_state()
 
     @classmethod
     def instance(cls) -> "BinanceWSHub":
@@ -59,11 +64,13 @@ class BinanceWSHub:
 
     def stop(self) -> None:
         self._running = False
+        self._connected = False
+        self._save_ws_state()
         if self._task:
             self._task.cancel()
 
     def set_watchlist(self, symbols: list[str]) -> None:
-        new = {s.upper() for s in symbols}
+        new = {s.upper() for s in symbols if s}
         if new != self._desired_symbols:
             self._desired_symbols = new
             self._watchlist_version += 1
@@ -124,22 +131,14 @@ class BinanceWSHub:
         add(trending_sorted, "trending")
         return result
 
-    def seed_candles(self, symbol: str, candles: list[Candle]) -> None:
-        sym = symbol.upper()
-        if not candles:
-            return
-        buf = self._candles[sym]
-        buf.clear()
-        for c in candles[-MAX_CANDLES:]:
-            buf.append(c)
-        self._seeded.add(sym)
-        log.info("Seeded %s with %d candles", sym, len(buf))
-
     def get_window(self, symbol: str, interval: str = "1m", limit: int = 100) -> CandleWindow | None:
         buf = self._candles.get(symbol.upper())
-        if not buf or len(buf) < 20:
+        if not buf or len(buf) < MIN_CANDLES:
             return None
         return CandleWindow(symbol=symbol.upper(), interval=interval, candles=list(buf)[-limit:])
+
+    def candle_count(self, symbol: str) -> int:
+        return len(self._candles.get(symbol.upper(), ()))
 
     def get_order_book(self, symbol: str) -> dict:
         return dict(self._books.get(symbol.upper(), {}))
@@ -150,20 +149,30 @@ class BinanceWSHub:
     def ticker_count(self) -> int:
         return len(self._tickers)
 
-    def has_seed(self, symbol: str) -> bool:
-        return symbol.upper() in self._seeded and len(self._candles.get(symbol.upper(), ())) >= 20
+    def websocket_connected(self) -> bool:
+        return self._connected
+
+    def last_message_age_seconds(self) -> float | None:
+        if self._last_message_monotonic is None:
+            return None
+        return max(0.0, time.monotonic() - self._last_message_monotonic)
+
+    def ready_symbol_count(self) -> int:
+        return sum(1 for candles in self._candles.values() if len(candles) >= MIN_CANDLES)
 
     async def _run_forever(self) -> None:
-        log.info("Binance WS hub starting")
+        log.info("Binance WS-only hub starting")
         while self._running:
             try:
                 await self._session()
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                self._connected = False
                 log.warning("WS session error: %s — retry 2s", e)
                 await asyncio.sleep(2)
-        log.info("Binance WS hub stopped")
+        self._connected = False
+        log.info("Binance WS-only hub stopped")
 
     async def _session(self) -> None:
         streams = ["!ticker@arr"]
@@ -181,6 +190,7 @@ class BinanceWSHub:
         async with websockets.connect(
             url, ping_interval=20, ping_timeout=20, max_size=8_000_000
         ) as ws:
+            self._connected = True
             while self._running:
                 if self._watchlist_version != version:
                     log.info("Watchlist version changed — reconnect")
@@ -190,6 +200,7 @@ class BinanceWSHub:
                 except asyncio.TimeoutError:
                     continue
 
+                self._last_message_monotonic = time.monotonic()
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
@@ -221,6 +232,7 @@ class BinanceWSHub:
                             "lastFundingRate": data.get("r"),
                             "nextFundingTime": data.get("T"),
                         }
+        self._connected = False
 
     def _handle_kline(self, data: dict) -> None:
         k = data.get("k") or {}
@@ -241,81 +253,65 @@ class BinanceWSHub:
             return
 
         buf = self._candles[sym]
-        if buf and buf[-1].open_time == candle.open_time:
+        new_bar = not buf or buf[-1].open_time != candle.open_time
+        if not new_bar:
             buf[-1] = candle
         else:
             buf.append(candle)
 
+        # Persist only when Binance marks a candle closed. This keeps the local
+        # history entirely derived from WebSocket observations.
+        if bool(k.get("x")):
+            self._save_ws_state()
 
-async def _http_get(path: str, params: dict | None = None) -> Any:
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(f"{FAPI}{path}", params=params or {})
-        r.raise_for_status()
-        return r.json()
+    def _load_ws_state(self) -> None:
+        try:
+            if not STATE_PATH.exists():
+                return
+            raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            for sym, items in (raw.get("candles") or {}).items():
+                buf = self._candles[sym.upper()]
+                for item in items[-MAX_CANDLES:]:
+                    buf.append(Candle.model_validate(item))
+            log.info("Loaded WS-only candle cache for %d symbols", len(self._candles))
+        except Exception as e:
+            log.warning("Could not load WS candle cache: %s", e)
 
-
-async def _seed_klines_http(symbol: str, interval: str, limit: int) -> list[Candle]:
-    raw = await _http_get(
-        "/fapi/v1/klines",
-        params={"symbol": symbol.upper(), "interval": interval, "limit": limit},
-    )
-    return [
-        Candle(
-            open_time=int(row[0]),
-            open=float(row[1]),
-            high=float(row[2]),
-            low=float(row[3]),
-            close=float(row[4]),
-            volume=float(row[5]),
-            close_time=int(row[6]),
-        )
-        for row in raw
-    ]
-
-
-async def _seed_tickers_http_if_needed(hub: BinanceWSHub) -> None:
-    """If WS tickers not ready yet, one-shot 24h ticker snapshot for discovery."""
-    if hub.ticker_count() > 50:
-        return
-    try:
-        arr = await _http_get("/fapi/v1/ticker/24hr")
-        for t in arr:
-            sym = (t.get("symbol") or "").upper()
-            if not sym:
-                continue
-            # map REST fields to WS mini-ticker-like keys used by discover_coins
-            hub._tickers[sym] = {
-                "s": sym,
-                "P": t.get("priceChangePercent"),
-                "q": t.get("quoteVolume"),
-                "c": t.get("lastPrice"),
+    def _save_ws_state(self) -> None:
+        try:
+            STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "source": "binance_websocket_only",
+                "candles": {
+                    sym: [c.model_dump(mode="json") for c in list(buf)]
+                    for sym, buf in self._candles.items()
+                    if buf
+                },
             }
-        log.info("Seeded %d tickers via HTTP bootstrap", len(arr))
-    except Exception as e:
-        log.warning("Ticker HTTP seed failed: %s", e)
+            tmp = STATE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(STATE_PATH)
+        except Exception as e:
+            log.debug("Could not persist WS candle cache: %s", e)
 
 
 async def ensure_hub() -> BinanceWSHub:
+    """Start the WebSocket hub and briefly wait for its first ticker messages."""
     hub = BinanceWSHub.instance()
     await hub.ensure_started()
-    for _ in range(30):
+    for _ in range(50):
         if hub.ticker_count() > 10:
             break
         await asyncio.sleep(0.2)
-    if hub.ticker_count() < 10:
-        await _seed_tickers_http_if_needed(hub)
     return hub
 
 
 async def discover_coins(**kwargs) -> list[DiscoveredCoin]:
     hub = await ensure_hub()
     coins = hub.discover_coins(**kwargs)
-    if not coins:
-        await _seed_tickers_http_if_needed(hub)
-        coins = hub.discover_coins(**kwargs)
     if coins:
         hub.set_watchlist([c.symbol for c in coins])
-    log.info("Discovery returned %d coins", len(coins))
+    log.info("WS-only discovery returned %d coins", len(coins))
     return coins
 
 
@@ -323,52 +319,27 @@ async def fetch_klines(symbol: str, interval: str = "1m", limit: int = 100) -> C
     hub = await ensure_hub()
     sym = symbol.upper()
     hub.set_watchlist(list(hub._desired_symbols | {sym}))
-
-    # One-shot history seed if buffer thin (required — WS has no history)
-    if not hub.has_seed(sym):
-        try:
-            candles = await _seed_klines_http(sym, interval, limit)
-            hub.seed_candles(sym, candles)
-        except Exception as e:
-            log.warning("Kline seed failed for %s: %s", sym, e)
-
-    w = hub.get_window(sym, interval=interval, limit=limit)
-    if not w:
-        # last resort direct HTTP window (still no polling)
-        candles = await _seed_klines_http(sym, interval, limit)
-        hub.seed_candles(sym, candles)
-        w = hub.get_window(sym, interval=interval, limit=limit)
-    if not w:
-        raise RuntimeError(f"No candle data for {sym}")
-    return w
+    window = hub.get_window(sym, interval=interval, limit=limit)
+    if not window:
+        count = hub.candle_count(sym)
+        raise RuntimeError(
+            f"WebSocket candle history not ready for {sym}: {count}/{MIN_CANDLES} bars collected"
+        )
+    return window
 
 
 async def fetch_order_book(symbol: str, limit: int = 20) -> dict:
     hub = await ensure_hub()
-    book = hub.get_order_book(symbol)
-    if book.get("bids") or book.get("asks"):
-        return book
-    # one-shot depth if WS not attached yet
-    try:
-        data = await _http_get("/fapi/v1/depth", params={"symbol": symbol.upper(), "limit": limit})
-        return {"bids": data.get("bids") or [], "asks": data.get("asks") or []}
-    except Exception:
-        return {"bids": [], "asks": []}
+    hub.set_watchlist(list(hub._desired_symbols | {symbol.upper()}))
+    return hub.get_order_book(symbol)
 
 
 async def fetch_premium_index(symbol: str) -> dict:
     hub = await ensure_hub()
-    mark = hub.get_mark(symbol)
-    if mark:
-        return mark
-    try:
-        return await _http_get("/fapi/v1/premiumIndex", params={"symbol": symbol.upper()})
-    except Exception:
-        return {"lastFundingRate": 0, "markPrice": None}
+    hub.set_watchlist(list(hub._desired_symbols | {symbol.upper()}))
+    return hub.get_mark(symbol)
 
 
 async def fetch_open_interest(symbol: str) -> dict:
-    try:
-        return await _http_get("/fapi/v1/openInterest", params={"symbol": symbol.upper()})
-    except Exception:
-        return {"openInterest": 0}
+    """Open interest is intentionally unavailable: no REST fallback is allowed."""
+    return {"openInterest": None, "source": "unavailable_websocket_only"}
