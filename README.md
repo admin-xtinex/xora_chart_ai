@@ -2,7 +2,8 @@
 
 API-first live chart-pattern scanner for Binance Futures.
 
-**Clients:** Web dashboard · future Android (same `/api/v1` JSON)
+**Clients:** Web dashboard · **Android app** (same `/api/v1` JSON)  
+**Market data:** Binance **WebSocket only** (no REST)
 
 ---
 
@@ -10,19 +11,19 @@ API-first live chart-pattern scanner for Binance Futures.
 
 | Engine | Role |
 |--------|------|
-| **Analysis** | Volume, order book, funding, OI, volatility, regime |
-| **Decision** | APPROVE / WAIT / REJECT + confirmations + entry/SL/TP |
-| **Trade** | Demo positions (default), sizing, leverage caps |
+| **Analysis** | Volume, order book, funding, volatility, regime |
+| **Decision** | APPROVE / WAIT / REJECT + confirmations + levels |
+| **Trade** | Demo positions, sizing, leverage caps, auto-trade |
 
 ```
-Pattern match → Analysis → Decision → Trade (optional) → API
+WS hub → Discovery → Pattern match → Analysis → Decision → Trade (optional) → API
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-## Quick start
+## Quick start (Docker)
 
 ```bash
 docker compose up --build
@@ -34,28 +35,30 @@ docker compose up --build
 | API | http://localhost:8030 |
 | Docs | http://localhost:8030/docs |
 
-```bash
-# Scan
-curl -X POST http://localhost:8030/api/v1/cycles/run
-
-# Opportunities (includes market_analysis + decision)
-curl http://localhost:8030/api/v1/opportunities
-
-# Open demo trade from approved opportunity
-curl -X POST http://localhost:8030/api/v1/positions \
-  -H 'Content-Type: application/json' \
-  -d '{"opportunity_id":"<id>"}'
-```
-
-Trade mode: `XORA_TRADE_MODE=demo` (default). Live is disabled until explicitly enabled.
+First scan may need a short **WS warm-up** while candle buffers fill.
 
 ---
 
-## Phase status
+## Android APK
 
-| Phase | Scope | Status |
-|-------|--------|--------|
-| 1 | Catalog + UI | ✅ |
-| 2 | Scanner + charts + overlays | ✅ |
-| 3 | Analysis · Decision · Trade engines | ✅ Foundation |
-| 4 | Persist store, multi-TF, live adapter, Android | Planned |
+Project: [`android/`](android/)
+
+**CI:** Actions workflow builds debug APK and uploads artifact **`xora-chart-ai-debug-apk`**.
+
+- Trigger: push to `main` (android paths) or manual **Run workflow**
+- Download: GitHub → Actions → run → Artifacts
+
+Default API in emulator: `http://10.0.2.2:8030` (editable in-app).
+
+---
+
+## API highlights
+
+```bash
+curl -X POST http://localhost:8030/api/v1/cycles/run
+curl http://localhost:8030/api/v1/opportunities
+curl -X PATCH http://localhost:8030/api/v1/settings -H 'Content-Type: application/json' -d '{"auto_trade":true}'
+curl http://localhost:8030/api/v1/positions/history/summary
+```
+
+Trade mode: `XORA_TRADE_MODE=demo` (default).
