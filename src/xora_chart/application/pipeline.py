@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from xora_chart.application import discovery, market_data, matcher, ranking, trade_generator, validator
+from xora_chart.application import discovery, explainer, market_data, matcher, ranking, trade_generator, validator
 from xora_chart.domain.enums import OpportunityStatus
 from xora_chart.domain.models import CycleResult, Opportunity
 from xora_chart.persistence.store import Store
@@ -52,6 +52,8 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
             if trade is None:
                 continue
 
+            analysis = explainer.build_analysis(window, best, trade, validation_note=rationale)
+
             opp = Opportunity(
                 symbol=window.symbol,
                 interval=window.interval,
@@ -61,6 +63,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 trade=trade,
                 ai_validated=accepted,
                 ai_rationale=rationale,
+                analysis=analysis,
                 cycle_id=result.cycle_id,
                 candle_count=len(window.candles),
                 last_price=window.candles[-1].close if window.candles else None,
