@@ -88,7 +88,7 @@ function OppDetail({ opp }) {
         <div className="text-center px-6">
           <div className="text-4xl mb-3 opacity-40">🎯</div>
           <p className="text-sm">Select an opportunity or run a scan</p>
-          <p className="text-xs text-slate-600 mt-2">Shows where price sits inside the matched pattern</p>
+          <p className="text-xs text-slate-600 mt-2">Pattern structure is drawn on the live chart</p>
         </div>
       </div>
     )
@@ -115,7 +115,18 @@ function OppDetail({ opp }) {
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Where price is now — primary insight */}
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+            Live structure · {opp.interval || '1m'} · pattern drawn on chart
+          </h3>
+          <CandleChart
+            candles={opp.candles || []}
+            trade={opp.trade}
+            overlays={a.chart_overlays}
+            height={400}
+          />
+        </section>
+
         {(a.pattern_phase || a.pattern_phase_detail || a.current_area) && (
           <Section title="Where price is now in the pattern" accent>
             {a.pattern_phase && (
@@ -125,16 +136,7 @@ function OppDetail({ opp }) {
           </Section>
         )}
 
-        {(a.summary) && (
-          <Section title="Pattern analysis">{a.summary}</Section>
-        )}
-
-        <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-            Live structure · {opp.interval || '1m'}
-          </h3>
-          <CandleChart candles={opp.candles || []} trade={opp.trade} height={360} />
-        </section>
+        {a.summary && <Section title="Pattern analysis">{a.summary}</Section>}
 
         <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="rounded-lg bg-xora-800 border border-xora-600/50 p-3">
