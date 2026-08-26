@@ -15,64 +15,22 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  GCP_VM_HOST: 35.209.66.225
-  GCP_VM_USER: info
-
 jobs:
   deploy:
     name: Deploy production
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, xora-gcp]
     environment: production
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
-      - name: Validate SSH secret
+      - name: Deploy directly on production VM
         shell: bash
-        env:
-          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${GCP_SSH_PRIVATE_KEY:-}" ]]; then
-            echo "Missing required GitHub Actions secret: GCP_SSH_PRIVATE_KEY" >&2
-            exit 1
-          fi
-
-      - name: Configure SSH
-        shell: bash
-        env:
-          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$GCP_SSH_PRIVATE_KEY" > ~/.ssh/xora_gcp
-          chmod 600 ~/.ssh/xora_gcp
-          ssh-keyscan -H "$GCP_VM_HOST" >> ~/.ssh/known_hosts
-
-      - name: Deploy XORA
-        shell: bash
-        env:
-          GCP_DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          DEPLOY_PATH="${GCP_DEPLOY_PATH:-xora_chart_ai}"
-
-          ssh -i ~/.ssh/xora_gcp \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o ServerAliveInterval=30 \
-            "$GCP_VM_USER@$GCP_VM_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
-          set -euo pipefail
-
-          DEPLOY_PATH="${DEPLOY_PATH:-xora_chart_ai}"
-          case "$DEPLOY_PATH" in
-            /*) DEPLOY_DIR="$DEPLOY_PATH" ;;
-            *)  DEPLOY_DIR="$HOME/$DEPLOY_PATH" ;;
-          esac
+          DEPLOY_DIR="$HOME/xora_chart_ai"
 
           if ! command -v docker >/dev/null 2>&1; then
-            echo "Docker is not installed. Run deploy/gcp/setup-vm.sh on the VM once before enabling CI/CD." >&2
+            echo "Docker is not installed on the self-hosted runner." >&2
             exit 1
           fi
 
@@ -89,23 +47,21 @@ jobs:
             cp .env.production.example .env.production
           fi
 
-          chmod +x deploy/gcp/deploy.sh
+          chmod +x deploy/gcp/deploy.sh deploy/gcp/cleanup-old-data.sh deploy/gcp/install-cleanup-cron.sh
           ./deploy/gcp/deploy.sh
-          REMOTE
+          sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
-      - name: Public frontend verification
+      - name: Verify local frontend
         shell: bash
         run: |
           set -euo pipefail
           for i in {1..18}; do
-            HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "http://${GCP_VM_HOST}/" || true)"
+            HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
             if [[ "$HOME_CODE" == "200" ]]; then
-              echo "Frontend HTTP 200. Backend WebSocket verification already passed on the VM."
+              echo "Frontend HTTP 200 on self-hosted production VM."
               exit 0
             fi
             sleep 5
           done
-
-          echo "Public frontend verification failed." >&2
-          echo "Last homepage code: ${HOME_CODE:-<none>}" >&2
+          echo "Local frontend verification failed. Last code: ${HOME_CODE:-<none>}" >&2
           exit 1
