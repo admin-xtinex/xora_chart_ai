@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: xora-gcp-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -93,20 +93,23 @@ jobs:
           ./deploy/gcp/deploy.sh
           REMOTE
 
-      - name: Public health check
+      - name: Public production verification
         shell: bash
         run: |
           set -euo pipefail
-          for i in {1..12}; do
-            if curl --fail --silent --show-error \
-              --max-time 10 \
-              "http://${GCP_VM_HOST}/api/v1/health"; then
-              echo
-              echo "XORA production deployment is healthy."
+          for i in {1..18}; do
+            HEALTH="$(curl --fail --silent --show-error --max-time 10 "http://${GCP_VM_HOST}/api/v1/health" || true)"
+            HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "http://${GCP_VM_HOST}/" || true)"
+            if [[ "$HOME_CODE" == "200" ]] \
+              && jq -e '.reference_gate == true and .reference_images >= 10 and (.status == "ok" or .status == "degraded")' <<<"$HEALTH" >/dev/null 2>&1; then
+              echo "$HEALTH"
+              echo "Frontend HTTP 200 and reference-gated API verified."
               exit 0
             fi
             sleep 5
           done
 
-          echo "Public health check failed." >&2
+          echo "Production verification failed." >&2
+          echo "Last health payload: ${HEALTH:-<none>}" >&2
+          echo "Last homepage code: ${HOME_CODE:-<none>}" >&2
           exit 1
