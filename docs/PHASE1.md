@@ -8,14 +8,13 @@
 
 ## Goal of Phase 1
 
-Establish the foundational identity, knowledge base, and integration contract for Chart Pattern AI so that:
+Establish the foundational identity, knowledge base, UI, and integration contract for Chart Pattern AI so that:
 
 1. The 10 reference educational cards are turned into structured, queryable data.
-2. A clean FastAPI surface exists for pattern education.
-3. A module skeleton is ready to plug into `xora_trade_ai` as the `chart_pattern` analyzer (currently listed as future in trade_ai Phase 1).
-4. No detection / vision / LLM logic is required yet — that is Phase 2+.
-
-Phase 1 deliberately stays lightweight and documentation-first, following the same discipline used in `xora_trade_ai`.
+2. A clean FastAPI surface exists for pattern education (port **8030**).
+3. A polished React frontend lets users browse every pattern + reference image.
+4. Everything is dockerised (`docker compose up --build`).
+5. A module skeleton is ready to plug into `xora_trade_ai` as the `chart_pattern` analyzer.
 
 ---
 
@@ -26,35 +25,50 @@ Phase 1 deliberately stays lightweight and documentation-first, following the sa
 | 1 | Project README with clear product boundary | ✅ |
 | 2 | Full pattern catalog (10 patterns) extracted from reference images | ✅ |
 | 3 | Structured JSON + Python data model for every pattern | ✅ |
-| 4 | FastAPI service (`/api/v1/patterns`, `/patterns/{id}`) | ✅ |
-| 5 | Module contract skeleton matching `xora_trade_ai` Analyzer protocol | ✅ |
-| 6 | Folder structure aligned with future growth | ✅ |
-| 7 | pyproject.toml + basic package | ✅ |
+| 4 | FastAPI service on **port 8030** (`/api/v1/patterns`, health, static references) | ✅ |
+| 5 | React + Vite + Tailwind frontend (pattern browser + detail view) | ✅ |
+| 6 | Docker + docker-compose (backend :8030, frontend :3030) | ✅ |
+| 7 | Module contract skeleton matching `xora_trade_ai` Analyzer protocol | ✅ |
 | 8 | This Phase 1 document | ✅ |
+
+---
+
+## Ports
+
+| Service | Host port | Container |
+|---------|-----------|-----------|
+| Backend API | **8030** | 8030 |
+| Frontend UI | **3030** | 80 (nginx) |
+
+8000 is intentionally avoided (commonly used by other XORA services).
 
 ---
 
 ## Architecture (Phase 1)
 
 ```
-+------------------ API -------------------+
-|  FastAPI  /api/v1/patterns               |
-+--------------- Application --------------+
-|  PatternCatalog service                  |
-+---------------- Domain ------------------+
-|  Pattern, TradingSetup, Direction enums  |
-+------------- Infrastructure -------------+
-|  Static JSON catalog (patterns.json)     |
-+------------------------------------------+
++------------------ Frontend -----------------+
+|  React (Vite) + Tailwind                    |
+|  Pattern list · filters · detail · images   |
+|  Port 3030                                  |
++-------------------- API --------------------+
+|  FastAPI  /api/v1/patterns                  |
+|  Static /references/* (chart_reference PNGs)|
+|  Port 8030                                  |
++--------------- Application -----------------+
+|  PatternCatalog service                     |
++---------------- Domain ---------------------+
+|  Pattern, TradingSetup, Direction enums     |
++------------- Infrastructure ----------------+
+|  Static JSON catalog (data/patterns.json)   |
++---------------------------------------------+
 ```
 
 No database, no market data, no worker yet.
 
-The only runtime dependency is FastAPI + the static catalog.
-
 ---
 
-## Pattern Inventory (from chart_reference/)
+## Pattern Inventory
 
 | Key | Name | Bias | Type |
 |-----|------|------|------|
@@ -69,43 +83,21 @@ The only runtime dependency is FastAPI + the static catalog.
 | `bull_pennant` | Bull Pennant | Bullish | Continuation |
 | `bear_pennant` | Bear Pennant | Bearish | Continuation |
 
-Each entry contains:
+---
 
-- overview
-- characteristics (list)
-- trading_setup (entry / stop_loss / target)
-- key_points
-- volume_behaviour
-- example steps
+## Run
+
+```bash
+docker compose up --build
+```
+
+- UI → http://localhost:3030  
+- API → http://localhost:8030  
+- Docs → http://localhost:8030/docs
 
 ---
 
-## Integration Contract (for xora_trade_ai)
-
-Future module location (Phase 2):
-
-```
-src/xora_chart/modules/chart_pattern/
-    __init__.py
-    module.py          # implements Analyzer protocol
-```
-
-Expected interface (copied from trade_ai):
-
-```python
-class Analyzer(Protocol):
-    key: str
-    version: str
-
-    def analyze(self, snapshot: MarketSnapshot, config: ModuleConfig) -> FeatureResult:
-        ...
-```
-
-Phase 1 only ships the empty package + a note that detection arrives in Phase 2.
-
----
-
-## What is explicitly out of scope for Phase 1
+## What is out of scope for Phase 1
 
 - Geometric pattern detection on OHLCV
 - Vision model (image → pattern)
@@ -115,19 +107,12 @@ Phase 1 only ships the empty package + a note that detection arrives in Phase 2.
 - Worker / scheduling
 - Any trading or prediction logic
 
-These belong to Phase 2 (Detection) and Phase 3 (Vision + LLM).
+These belong to **Phase 2** (Detection) and **Phase 3** (Vision + LLM).
 
 ---
 
 ## Completion Statement
 
-Phase 1 is considered **complete** when:
+Phase 1 is **complete**: catalog, backend (8030), frontend, Docker, and module skeleton are all in place.
 
-- All 10 patterns are structured and queryable via the API
-- The README and this document accurately describe the system
-- The module skeleton exists and matches the trade_ai contract
-- The repository is no longer an empty image dump
-
-All of the above are true as of this commit.
-
-**Next:** Phase 2 — Geometric Pattern Detector + FeatureResult generation.
+**Next:** Phase 2 — Geometric Pattern Detector + FeatureResult generation for `xora_trade_ai`.
