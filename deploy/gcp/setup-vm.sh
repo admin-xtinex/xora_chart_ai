@@ -6,6 +6,11 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
+# Remove any stale Docker source left by a previous failed bootstrap before
+# the first apt update. This is especially important when switching between
+# Ubuntu and Debian repository URLs.
+rm -f /etc/apt/sources.list.d/docker.list
+
 apt-get update
 apt-get install -y ca-certificates curl git gnupg
 install -m 0755 -d /etc/apt/keyrings
