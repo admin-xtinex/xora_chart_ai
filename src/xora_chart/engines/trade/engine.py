@@ -8,7 +8,7 @@ from datetime import datetime
 
 from xora_chart.config import load_config
 from xora_chart.domain.enums import PositionStatus, Side, TradeMode
-from xora_chart.domain.models import Opportunity, Position, TradeDecision, TradeLevels
+from xora_chart.domain.models import Opportunity, Position, TradeLevels
 from xora_chart.persistence.store import Store
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,26 @@ def _sizing(entry: float, stop: float, equity: float, risk_pct: float, leverage:
     return round(qty, 6), round(margin, 4)
 
 
+def _last_price(symbol: str) -> float | None:
+    """Best available mark/last from WS hub, then ticker snapshot."""
+    try:
+        from xora_chart.services.binance_ws import BinanceWSHub
+
+        hub = BinanceWSHub.instance()
+        mark = hub.get_mark(symbol)
+        if mark.get("markPrice"):
+            return float(mark["markPrice"])
+        w = hub.get_window(symbol, limit=5)
+        if w and w.candles:
+            return float(w.candles[-1].close)
+        t = hub._tickers.get(symbol.upper())
+        if t and (t.get("c") is not None):
+            return float(t["c"])
+    except Exception as e:
+        log.debug("last_price %s: %s", symbol, e)
+    return None
+
+
 def open_position(
     *,
     symbol: str,
@@ -54,7 +74,6 @@ def open_position(
     max_lev = int(cfg.get("max_leverage", 5))
     leverage = min(int(cfg.get("default_leverage", 3)), max_lev)
 
-    # max open positions
     open_pos = [p for p in store.list_positions() if p.status == PositionStatus.OPEN]
     max_pos = int(cfg.get("max_open_positions", 5))
     if len(open_pos) >= max_pos:
@@ -82,14 +101,14 @@ def open_position(
         margin_used=margin,
         opportunity_id=opportunity_id,
         decision_reason=decision_reason,
+        last_price=setup.entry,
     )
 
     if mode == TradeMode.LIVE:
-        # Placeholder — wire signed Binance order API here later
         raise RuntimeError("Live adapter not implemented — use demo mode")
 
     store.save_position(pos)
-    log.info("DEMO open %s %s qty=%s lev=%sx margin=%s", pos.side.value, symbol, qty, leverage, margin)
+    log.info("DEMO open %s %s qty=%s lev=%sx", pos.side.value, symbol, qty, leverage)
     return pos
 
 
@@ -105,7 +124,12 @@ def open_from_opportunity(opp: Opportunity, store: Store | None = None) -> Posit
     )
 
 
-def close_position(position_id: str, exit_price: float | None = None, store: Store | None = None) -> Position:
+def close_position(
+    position_id: str,
+    exit_price: float | None = None,
+    reason: str = "manual",
+    store: Store | None = None,
+) -> Position:
     store = store or Store.instance()
     pos = store.get_position(position_id)
     if not pos:
@@ -113,7 +137,7 @@ def close_position(position_id: str, exit_price: float | None = None, store: Sto
     if pos.status != PositionStatus.OPEN:
         raise RuntimeError("Position not open")
 
-    px = exit_price if exit_price is not None else pos.entry
+    px = exit_price if exit_price is not None else (pos.last_price or pos.entry)
     if pos.side == Side.BUY:
         pnl = (px - pos.entry) * pos.quantity
     else:
@@ -121,11 +145,58 @@ def close_position(position_id: str, exit_price: float | None = None, store: Sto
 
     pos.status = PositionStatus.CLOSED
     pos.exit_price = px
+    pos.exit_reason = reason
     pos.realized_pnl = round(pnl, 4)
     pos.closed_at = datetime.utcnow()
     store.save_position(pos)
-    log.info("Closed %s pnl=%s", pos.symbol, pos.realized_pnl)
+    log.info("Closed %s reason=%s px=%s pnl=%s", pos.symbol, reason, px, pos.realized_pnl)
     return pos
+
+
+def _hit(pos: Position, px: float) -> str | None:
+    """Return exit reason if SL/TP touched at price px."""
+    if pos.side == Side.BUY:
+        if px <= pos.stop_loss:
+            return "sl"
+        if pos.take_profit_3 is not None and px >= pos.take_profit_3:
+            return "tp3"
+        if pos.take_profit_2 is not None and px >= pos.take_profit_2:
+            return "tp2"
+        if px >= pos.take_profit_1:
+            return "tp1"
+    else:
+        if px >= pos.stop_loss:
+            return "sl"
+        if pos.take_profit_3 is not None and px <= pos.take_profit_3:
+            return "tp3"
+        if pos.take_profit_2 is not None and px <= pos.take_profit_2:
+            return "tp2"
+        if px <= pos.take_profit_1:
+            return "tp1"
+    return None
+
+
+def manage_open_positions(store: Store | None = None) -> list[Position]:
+    """Mark last price and auto-close demo positions that hit SL or TP."""
+    store = store or Store.instance()
+    closed: list[Position] = []
+    for pos in list(store.list_positions()):
+        if pos.status != PositionStatus.OPEN:
+            continue
+        px = _last_price(pos.symbol)
+        if px is None:
+            continue
+        pos.last_price = px
+        store.save_position(pos)
+        reason = _hit(pos, px)
+        if reason:
+            try:
+                closed.append(close_position(pos.id, exit_price=px, reason=reason, store=store))
+            except RuntimeError as e:
+                log.warning("auto-close failed %s: %s", pos.symbol, e)
+    if closed:
+        log.info("Managed positions: closed %d", len(closed))
+    return closed
 
 
 def list_positions(status: str | None = None, store: Store | None = None) -> list[Position]:
