@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from typing import Any
 
 from xora_chart.config import load_config
 from xora_chart.domain.models import CycleResult, Opportunity, Position
@@ -15,6 +16,7 @@ class Store:
 
     def __init__(self) -> None:
         cfg = load_config().get("store", {})
+        trade_cfg = load_config().get("trade", {})
         self._max_cycles = int(cfg.get("max_cycles_kept", 50))
         self._max_opps = int(cfg.get("max_opportunities_kept", 200))
         self._max_positions = int(cfg.get("max_positions_kept", 200))
@@ -23,6 +25,11 @@ class Store:
         self._positions: dict[str, Position] = {}
         self._position_order: deque[str] = deque(maxlen=self._max_positions)
         self._latest_cycle: CycleResult | None = None
+        # Runtime flags (toggle from UI without restart)
+        self._settings: dict[str, Any] = {
+            "auto_trade": bool(trade_cfg.get("auto_trade", False)),
+            "trade_mode": str(trade_cfg.get("mode", "demo")),
+        }
 
     @classmethod
     def instance(cls) -> "Store":
@@ -32,6 +39,23 @@ class Store:
                     cls._instance = Store()
         return cls._instance
 
+    # ── Settings ─────────────────────────────────────────────────────────────
+
+    def get_settings(self) -> dict[str, Any]:
+        return dict(self._settings)
+
+    def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        if "auto_trade" in patch:
+            self._settings["auto_trade"] = bool(patch["auto_trade"])
+        if "trade_mode" in patch and patch["trade_mode"] in ("demo", "live"):
+            self._settings["trade_mode"] = patch["trade_mode"]
+        return self.get_settings()
+
+    def auto_trade_enabled(self) -> bool:
+        return bool(self._settings.get("auto_trade"))
+
+    # ── Cycles / opportunities ───────────────────────────────────────────────
+
     def save_cycle(self, cycle: CycleResult) -> None:
         self._cycles.appendleft(cycle)
         self._latest_cycle = cycle
@@ -39,6 +63,18 @@ class Store:
     def save_opportunities(self, opps: list[Opportunity]) -> None:
         for o in reversed(opps):
             self._opportunities.appendleft(o)
+
+    def update_opportunity(self, opp: Opportunity) -> None:
+        for i, existing in enumerate(self._opportunities):
+            if existing.id == opp.id:
+                # deque doesn't support item assign by index easily for all versions
+                items = list(self._opportunities)
+                for j, e in enumerate(items):
+                    if e.id == opp.id:
+                        items[j] = opp
+                        break
+                self._opportunities = deque(items, maxlen=self._max_opps)
+                return
 
     def latest_cycle(self) -> CycleResult | None:
         return self._latest_cycle
@@ -54,6 +90,8 @@ class Store:
             if o.id == opp_id:
                 return o
         return None
+
+    # ── Positions ────────────────────────────────────────────────────────────
 
     def save_position(self, pos: Position) -> None:
         if pos.id not in self._positions:
