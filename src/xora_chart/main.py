@@ -8,8 +8,8 @@ from xora_chart.api.v1 import router as v1_router
 
 app = FastAPI(
     title="XORA Chart AI",
-    description="Chart Pattern Recognition & Educational Intelligence — Phase 1",
-    version="0.1.0",
+    description="Live chart-pattern scanner for Binance Futures — Phase 2",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -22,7 +22,6 @@ app.add_middleware(
 
 app.include_router(v1_router)
 
-# Serve reference images so the frontend can display them
 _REF_CANDIDATES = [
     Path(__file__).resolve().parents[2] / "chart_reference",
     Path(__file__).resolve().parents[3] / "chart_reference",
@@ -38,10 +37,12 @@ for _ref in _REF_CANDIDATES:
 def root() -> dict:
     return {
         "service": "xora-chart-ai",
-        "phase": 1,
-        "status": "complete",
+        "phase": 2,
+        "status": "pipeline-foundation",
         "port": 8030,
         "docs": "/docs",
         "patterns": "/api/v1/patterns",
+        "opportunities": "/api/v1/opportunities",
+        "run_cycle": "POST /api/v1/cycles/run",
         "references": "/references/",
     }
