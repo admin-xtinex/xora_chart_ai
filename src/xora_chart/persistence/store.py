@@ -21,11 +21,11 @@ class Store:
         self._max_opps = int(cfg.get("max_opportunities_kept", 200))
         self._max_positions = int(cfg.get("max_positions_kept", 200))
         self._cycles: deque[CycleResult] = deque(maxlen=self._max_cycles)
-        self._opportunities: deque[Opportunity] = deque(maxlen=self._max_opps)
+        self._opps_by_symbol: dict[str, Opportunity] = {}
+        self._opp_order: deque[str] = deque()
         self._positions: dict[str, Position] = {}
         self._position_order: deque[str] = deque(maxlen=self._max_positions)
         self._latest_cycle: CycleResult | None = None
-        # Runtime flags (toggle from UI without restart)
         self._settings: dict[str, Any] = {
             "auto_trade": bool(trade_cfg.get("auto_trade", False)),
             "trade_mode": str(trade_cfg.get("mode", "demo")),
@@ -38,8 +38,6 @@ class Store:
                 if cls._instance is None:
                     cls._instance = Store()
         return cls._instance
-
-    # ── Settings ─────────────────────────────────────────────────────────────
 
     def get_settings(self) -> dict[str, Any]:
         return dict(self._settings)
@@ -54,27 +52,27 @@ class Store:
     def auto_trade_enabled(self) -> bool:
         return bool(self._settings.get("auto_trade"))
 
-    # ── Cycles / opportunities ───────────────────────────────────────────────
-
     def save_cycle(self, cycle: CycleResult) -> None:
         self._cycles.appendleft(cycle)
         self._latest_cycle = cycle
 
     def save_opportunities(self, opps: list[Opportunity]) -> None:
-        for o in reversed(opps):
-            self._opportunities.appendleft(o)
+        """Keep one opportunity per symbol (latest scan wins)."""
+        for o in opps:
+            key = o.symbol.upper()
+            existing = self._opps_by_symbol.get(key)
+            if existing is None:
+                self._opp_order.appendleft(key)
+            self._opps_by_symbol[key] = o
+        # cap
+        while len(self._opp_order) > self._max_opps:
+            old = self._opp_order.pop()
+            self._opps_by_symbol.pop(old, None)
 
     def update_opportunity(self, opp: Opportunity) -> None:
-        for i, existing in enumerate(self._opportunities):
-            if existing.id == opp.id:
-                # deque doesn't support item assign by index easily for all versions
-                items = list(self._opportunities)
-                for j, e in enumerate(items):
-                    if e.id == opp.id:
-                        items[j] = opp
-                        break
-                self._opportunities = deque(items, maxlen=self._max_opps)
-                return
+        self._opps_by_symbol[opp.symbol.upper()] = opp
+        if opp.symbol.upper() not in self._opp_order:
+            self._opp_order.appendleft(opp.symbol.upper())
 
     def latest_cycle(self) -> CycleResult | None:
         return self._latest_cycle
@@ -83,15 +81,27 @@ class Store:
         return list(self._cycles)[:limit]
 
     def list_opportunities(self, limit: int = 50) -> list[Opportunity]:
-        return list(self._opportunities)[:limit]
+        items: list[Opportunity] = []
+        seen: set[str] = set()
+        for key in self._opp_order:
+            if key in seen:
+                continue
+            seen.add(key)
+            o = self._opps_by_symbol.get(key)
+            if o:
+                items.append(o)
+            if len(items) >= limit:
+                break
+        return items
 
     def get_opportunity(self, opp_id: str) -> Opportunity | None:
-        for o in self._opportunities:
+        for o in self._opps_by_symbol.values():
             if o.id == opp_id:
                 return o
         return None
 
-    # ── Positions ────────────────────────────────────────────────────────────
+    def get_opportunity_by_symbol(self, symbol: str) -> Opportunity | None:
+        return self._opps_by_symbol.get(symbol.upper())
 
     def save_position(self, pos: Position) -> None:
         if pos.id not in self._positions:
