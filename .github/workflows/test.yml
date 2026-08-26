@@ -13,28 +13,23 @@ on:
       - "deploy/gcp/**"
       - "pyproject.toml"
       - ".github/workflows/test.yml"
-  pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "config/**"
-      - "frontend/**"
-      - "Dockerfile*"
-      - "docker-compose*.yml"
-      - "deploy/gcp/**"
-      - "pyproject.toml"
-      - ".github/workflows/test.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: xora-gcp-tests
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    runs-on: [self-hosted, linux, x64, xora-gcp]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
