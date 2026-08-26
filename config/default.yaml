@@ -20,8 +20,6 @@ matcher:
   ai_threshold: 70.0
   max_matches_per_symbol: 3
 
-a nalysis: {}
-
 analysis:
   weights:
     volume: 0.30
@@ -54,11 +52,10 @@ trade:
 ranking:
   top_n: 15
   weights:
-    similarity: 0.35
+    similarity: 0.40
     confidence: 0.25
     risk_reward: 0.15
-    analysis: 0.15
-    reference: 0.10
+    analysis: 0.20
 
 ai:
   enabled: true
