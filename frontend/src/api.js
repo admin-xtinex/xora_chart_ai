@@ -5,15 +5,8 @@ export async function fetchPatterns({ direction, type } = {}) {
   if (direction) params.set('direction', direction)
   if (type) params.set('type', type)
   const qs = params.toString()
-  const url = `${API_BASE}/api/v1/patterns${qs ? `?${qs}` : ''}`
-  const res = await fetch(url)
+  const res = await fetch(`${API_BASE}/api/v1/patterns${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error(`Failed to load patterns: ${res.status}`)
-  return res.json()
-}
-
-export async function fetchPattern(key) {
-  const res = await fetch(`${API_BASE}/api/v1/patterns/${key}`)
-  if (!res.ok) throw new Error(`Pattern not found`)
   return res.json()
 }
 
@@ -23,7 +16,26 @@ export async function fetchHealth() {
   return res.json()
 }
 
-/** Map pattern key → reference image filename (best effort from the uploaded set) */
+export async function fetchOpportunities(limit = 20) {
+  const res = await fetch(`${API_BASE}/api/v1/opportunities?limit=${limit}`)
+  if (!res.ok) throw new Error(`Failed to load opportunities: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchLatestCycle() {
+  const res = await fetch(`${API_BASE}/api/v1/cycles/latest`)
+  if (!res.ok) throw new Error('Failed to load cycle')
+  if (res.status === 204) return null
+  const data = await res.json()
+  return data
+}
+
+export async function runCycle() {
+  const res = await fetch(`${API_BASE}/api/v1/cycles/run`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Scan failed: ${res.status}`)
+  return res.json()
+}
+
 const IMAGE_MAP = {
   breakout_retest: 'ChatGPT Image Aug 26, 2026, 03_17_17 AM.png',
   double_bottom: 'ChatGPT Image Aug 26, 2026, 03_17_21 AM.png',
