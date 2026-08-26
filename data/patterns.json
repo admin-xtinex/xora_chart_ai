@@ -1,0 +1,314 @@
+{
+  "patterns": [
+    {
+      "key": "breakout_retest",
+      "name": "Breakout + Retest Pattern",
+      "direction": "bullish",
+      "type": "continuation",
+      "overview": "The Breakout + Retest pattern occurs when price breaks above a key resistance level and then pulls back (retests) that level. If the retest holds as support, price is likely to continue in the direction of the breakout.",
+      "characteristics": [
+        "Occurs in an uptrend",
+        "Breakout above a key resistance",
+        "Price pulls back to retest the broken resistance",
+        "Retest holds as new support",
+        "Continuation of the uptrend",
+        "Volume decreases on retest and increases on continuation"
+      ],
+      "trading_setup": {
+        "entry": "Buy above retest high",
+        "stop_loss": "Below retest low",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Breakout above key resistance is important",
+        "Retest confirms the level as new support",
+        "Lower volume on retest adds reliability",
+        "Higher volume on continuation confirms strength"
+      ],
+      "volume_behaviour": {
+        "breakout": "High volume",
+        "retest": "Lower volume",
+        "continuation": "High volume"
+      }
+    },
+    {
+      "key": "breakdown_retest",
+      "name": "Breakdown + Retest Pattern (Bearish)",
+      "direction": "bearish",
+      "type": "continuation",
+      "overview": "The Breakdown + Retest pattern occurs when price breaks below a key support level and then pulls back to retest that level (now acting as resistance). If the retest fails, price is likely to continue moving down.",
+      "characteristics": [
+        "Occurs in a downtrend or after range breakdown",
+        "Price breaks below a key support level",
+        "Pulls back to retest the broken support (now resistance)",
+        "Retest gets rejected",
+        "Price continues downward",
+        "Volume increases on breakdown and on continuation"
+      ],
+      "trading_setup": {
+        "entry": "Sell below retest rejection low",
+        "stop_loss": "Above retest high",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Break below key support is the first confirmation",
+        "Retest of broken support as resistance is the key setup",
+        "Rejection at retest confirms seller control",
+        "Volume should be higher on breakdown and continuation"
+      ],
+      "volume_behaviour": {
+        "breakdown": "High volume",
+        "retest": "Lower volume",
+        "continuation": "High volume"
+      }
+    },
+    {
+      "key": "head_and_shoulders",
+      "name": "Head and Shoulders (Bearish)",
+      "direction": "bearish",
+      "type": "reversal",
+      "overview": "The Head and Shoulders is a bearish reversal pattern that forms after an uptrend. It consists of three peaks: a higher peak (Head) between two lower peaks (Shoulders). A breakdown below the neckline confirms the pattern and signals a potential downtrend.",
+      "characteristics": [
+        "Occurs after an uptrend",
+        "Three peaks: Left Shoulder, higher Head, Right Shoulder",
+        "Neckline connects the lows between the peaks",
+        "Breakdown below neckline confirms the pattern",
+        "Volume increases on breakdown",
+        "Price target is the height of the head projected downward"
+      ],
+      "trading_setup": {
+        "entry": "Sell below neckline",
+        "stop_loss": "Above right shoulder high",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Forms after an uptrend",
+        "Head is the highest peak",
+        "Shoulders are lower than head",
+        "Neckline connects the lows",
+        "Breakdown below neckline is key",
+        "Volume increases on breakdown"
+      ],
+      "volume_behaviour": {
+        "left_shoulder": "High volume",
+        "head": "Lower volume",
+        "right_shoulder": "Lower volume",
+        "breakdown": "High volume"
+      }
+    },
+    {
+      "key": "double_top",
+      "name": "Double Top Pattern",
+      "direction": "bearish",
+      "type": "reversal",
+      "overview": "The Double Top is a bearish reversal pattern that forms after an uptrend. It consists of two attempts to break a resistance level followed by a breakdown below the neckline support, signaling a potential trend reversal to the downside.",
+      "characteristics": [
+        "Occurs after an uptrend",
+        "Two distinct highs at the same resistance level",
+        "Neckline connects the lows between the two highs",
+        "Breakdown below neckline confirms the pattern",
+        "Volume decreases on the second top",
+        "Volume increases on breakdown"
+      ],
+      "trading_setup": {
+        "entry": "Sell below neckline",
+        "stop_loss": "Above resistance level",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Forms after a clear uptrend",
+        "Two tops at the same resistance level",
+        "Neckline connects the lows",
+        "Breakdown below neckline confirms bearish reversal",
+        "Higher volume on breakdown adds reliability"
+      ],
+      "volume_behaviour": {
+        "uptrend": "High volume",
+        "second_top": "Lower volume",
+        "breakdown": "High volume"
+      }
+    },
+    {
+      "key": "double_bottom",
+      "name": "Double Bottom Pattern",
+      "direction": "bullish",
+      "type": "reversal",
+      "overview": "The Double Bottom is a bullish reversal pattern that forms after a downtrend. It consists of two tests of a support level followed by a breakout above the neckline (resistance). The breakout signals a potential trend reversal and the start of a new uptrend.",
+      "characteristics": [
+        "Occurs after a downtrend",
+        "Two distinct lows at the same support level",
+        "Neckline connects the highs between the two bottoms",
+        "Breakout occurs above neckline",
+        "Volume decreases during formation and increases on breakout"
+      ],
+      "trading_setup": {
+        "entry": "Buy above neckline",
+        "stop_loss": "Below support level",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Forms after a clear downtrend",
+        "Two bottoms should be at the same support level",
+        "Breakout above neckline confirms the pattern",
+        "Higher volume on breakout increases reliability"
+      ],
+      "volume_behaviour": {
+        "downtrend": "High volume",
+        "formation": "Lower volume",
+        "breakout": "High volume"
+      }
+    },
+    {
+      "key": "cup_and_handle",
+      "name": "Cup and Handle Pattern",
+      "direction": "bullish",
+      "type": "continuation",
+      "overview": "The Cup and Handle is a bullish continuation pattern that forms in an uptrend. It consists of a rounded bottom (cup) followed by a small consolidation (handle). A breakout above the handle high signals the continuation of the uptrend.",
+      "characteristics": [
+        "Occurs in an uptrend",
+        "Cup forms a U-shaped rounded bottom",
+        "Handle forms a small downward consolidation",
+        "Breakout occurs above handle high",
+        "Volume decreases in handle and increases on breakout"
+      ],
+      "trading_setup": {
+        "entry": "Buy above handle high",
+        "stop_loss": "Below handle low",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Higher success rate when pattern forms after a strong uptrend",
+        "Ideal handle forms in the upper half of the cup",
+        "Breakout with high volume increases reliability"
+      ],
+      "volume_behaviour": {
+        "prior_uptrend": "High volume",
+        "cup": "Decreasing then increasing",
+        "handle": "Lower volume",
+        "breakout": "High volume"
+      }
+    },
+    {
+      "key": "bull_flag",
+      "name": "Bull Flag Pattern",
+      "direction": "bullish",
+      "type": "continuation",
+      "overview": "A Bull Flag is a continuation pattern that forms after a strong upward move (flagpole) followed by a small downward consolidation (flag). The breakout from the flag signals the continuation of the uptrend.",
+      "characteristics": [
+        "Occurs in an uptrend",
+        "Sharp upward move (flagpole)",
+        "Small downward consolidation (flag)",
+        "Breakout above resistance (flag high)",
+        "Volume decreases during flag formation and increases on breakout"
+      ],
+      "trading_setup": {
+        "entry": "Buy above flag high",
+        "stop_loss": "Below flag low",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Strong uptrend before the flag is essential",
+        "Flag slopes slightly downward or sideways",
+        "Breakout with high volume increases reliability"
+      ],
+      "volume_behaviour": {
+        "flagpole": "High volume",
+        "flag": "Lower volume",
+        "breakout": "High volume"
+      }
+    },
+    {
+      "key": "bear_flag",
+      "name": "Bear Flag Pattern",
+      "direction": "bearish",
+      "type": "continuation",
+      "overview": "The Bear Flag is a bearish continuation pattern that forms after a strong downward move (flagpole) followed by a small upward consolidation (flag). The breakdown below the flag signals the continuation of the downtrend.",
+      "characteristics": [
+        "Occurs in a downtrend",
+        "Sharp downward move (flagpole)",
+        "Small upward consolidation (flag) with parallel channel",
+        "Breakdown below flag support",
+        "Volume decreases during flag formation and increases on breakdown"
+      ],
+      "trading_setup": {
+        "entry": "Sell below flag low",
+        "stop_loss": "Above flag high",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Strong downtrend before the flag is essential",
+        "Flag slopes slightly upward or moves sideways",
+        "Breakdown below flag support confirms continuation",
+        "Higher volume on breakdown increases reliability"
+      ],
+      "volume_behaviour": {
+        "flagpole": "High volume",
+        "flag": "Lower volume",
+        "breakdown": "High volume"
+      }
+    },
+    {
+      "key": "bull_pennant",
+      "name": "Bull Pennant Pattern",
+      "direction": "bullish",
+      "type": "continuation",
+      "overview": "The Bull Pennant is a continuation pattern that forms after a strong uptrend (flagpole) followed by a small symmetrical consolidation (pennant). A breakout above the pennant resistance signals the continuation of the uptrend.",
+      "characteristics": [
+        "Occurs in an uptrend",
+        "Sharp upward move (flagpole)",
+        "Small consolidation in a symmetrical triangle (pennant)",
+        "Lower highs and higher lows during consolidation",
+        "Breakout above pennant resistance",
+        "Volume decreases during pennant and increases on breakout"
+      ],
+      "trading_setup": {
+        "entry": "Buy above pennant high",
+        "stop_loss": "Below pennant low",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Strong uptrend before the pennant is essential",
+        "Pennant forms with lower highs and higher lows",
+        "Volume decreases during pennant formation",
+        "Breakout with high volume increases reliability"
+      ],
+      "volume_behaviour": {
+        "flagpole": "High volume",
+        "pennant": "Lower volume",
+        "breakout": "High volume"
+      }
+    },
+    {
+      "key": "bear_pennant",
+      "name": "Bear Pennant Pattern",
+      "direction": "bearish",
+      "type": "continuation",
+      "overview": "The Bear Pennant is a continuation pattern that occurs after a strong downtrend (flagpole) followed by a small symmetrical consolidation (pennant). A breakdown below the pennant support signals the continuation of the downtrend.",
+      "characteristics": [
+        "Occurs in a downtrend",
+        "Sharp downward move (flagpole)",
+        "Small consolidation in a symmetrical triangle (pennant)",
+        "Lower highs and lower lows during consolidation",
+        "Breakdown below pennant support",
+        "Volume decreases during pennant and increases on breakdown"
+      ],
+      "trading_setup": {
+        "entry": "Sell below pennant low",
+        "stop_loss": "Above pennant high",
+        "target": "1.5R – 3R"
+      },
+      "key_points": [
+        "Strong downtrend before the pennant is essential",
+        "Pennant forms with lower highs and lower lows",
+        "Volume decreases during pennant formation",
+        "Breakdown with high volume increases reliability",
+        "Price likely continues in the direction of the breakdown"
+      ],
+      "volume_behaviour": {
+        "flagpole": "High volume",
+        "pennant": "Lower volume",
+        "breakdown": "High volume"
+      }
+    }
+  ]
+}
