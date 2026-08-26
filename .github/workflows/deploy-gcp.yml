@@ -1,0 +1,116 @@
+name: Deploy to Google Cloud VM
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: xora-gcp-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate required secrets
+        shell: bash
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
+          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in GCP_VM_HOST GCP_VM_USER GCP_SSH_PRIVATE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$GCP_SSH_PRIVATE_KEY" > ~/.ssh/xora_gcp
+          chmod 600 ~/.ssh/xora_gcp
+          ssh-keyscan -H "$GCP_VM_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy XORA
+        shell: bash
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
+          GCP_DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          DEPLOY_PATH="${GCP_DEPLOY_PATH:-xora_chart_ai}"
+
+          ssh -i ~/.ssh/xora_gcp \
+            -o BatchMode=yes \
+            -o ServerAliveInterval=30 \
+            "$GCP_VM_USER@$GCP_VM_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          DEPLOY_PATH="${DEPLOY_PATH:-xora_chart_ai}"
+          case "$DEPLOY_PATH" in
+            /*) DEPLOY_DIR="$DEPLOY_PATH" ;;
+            *)  DEPLOY_DIR="$HOME/$DEPLOY_PATH" ;;
+          esac
+
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Docker is not installed. Run deploy/gcp/setup-vm.sh on the VM once before enabling CI/CD." >&2
+            exit 1
+          fi
+
+          if [[ ! -d "$DEPLOY_DIR/.git" ]]; then
+            git clone https://github.com/admin-xtinex/xora_chart_ai.git "$DEPLOY_DIR"
+          fi
+
+          cd "$DEPLOY_DIR"
+          git fetch --prune origin main
+          git checkout -B main origin/main
+          git reset --hard origin/main
+
+          if [[ ! -f .env.production ]]; then
+            cp .env.production.example .env.production
+          fi
+
+          chmod +x deploy/gcp/deploy.sh
+          ./deploy/gcp/deploy.sh
+          REMOTE
+
+      - name: Public health check
+        shell: bash
+        env:
+          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
+        run: |
+          set -euo pipefail
+          for i in {1..12}; do
+            if curl --fail --silent --show-error \
+              --max-time 10 \
+              "http://${GCP_VM_HOST}/api/v1/health"; then
+              echo
+              echo "XORA production deployment is healthy."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Public health check failed." >&2
+          exit 1
