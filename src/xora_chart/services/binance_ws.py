@@ -1,13 +1,10 @@
 """Binance USDT-M Futures market data via WebSocket only (no REST).
 
-Streams used:
-  - !ticker@arr          → discovery (gainers / losers / volume)
-  - <symbol>@kline_1m    → rolling candle buffers
-  - <symbol>@depth20@100ms → order book imbalance
-  - <symbol>@markPrice@1s  → funding / mark price
-
-A background hub keeps subscriptions warm so the scan cycle reads
-from in-memory buffers instead of HTTP.
+Streams:
+  - !ticker@arr
+  - <symbol>@kline_1m
+  - <symbol>@depth20@100ms
+  - <symbol>@markPrice@1s
 """
 
 from __future__ import annotations
@@ -20,7 +17,6 @@ from collections import defaultdict, deque
 from typing import Any
 
 import websockets
-from websockets.exceptions import ConnectionClosed
 
 from xora_chart.domain.models import Candle, CandleWindow, DiscoveredCoin
 
@@ -31,8 +27,6 @@ MAX_CANDLES = 120
 
 
 class BinanceWSHub:
-    """Singleton live market-data hub."""
-
     _instance: "BinanceWSHub | None" = None
 
     def __init__(self) -> None:
@@ -40,28 +34,16 @@ class BinanceWSHub:
         self._candles: dict[str, deque[Candle]] = defaultdict(lambda: deque(maxlen=MAX_CANDLES))
         self._books: dict[str, dict[str, Any]] = {}
         self._mark: dict[str, dict[str, Any]] = {}
-        self._oi_proxy: dict[str, float] = {}  # not on public WS; leave empty
         self._desired_symbols: set[str] = set()
+        self._watchlist_version = 0
         self._task: asyncio.Task | None = None
         self._running = False
-        self._lock = asyncio.Lock()
-        self._last_ticker_ts = 0.0
 
     @classmethod
     def instance(cls) -> "BinanceWSHub":
         if cls._instance is None:
             cls._instance = BinanceWSHub()
         return cls._instance
-
-    def start(self) -> None:
-        if self._task and not self._task.done():
-            return
-        self._running = True
-        try:
-            loop = asyncio.get_running_loop()
-            self._task = loop.create_task(self._run_forever(), name="binance-ws-hub")
-        except RuntimeError:
-            log.warning("No running loop — hub will start on first await ensure_started()")
 
     async def ensure_started(self) -> None:
         if self._task and not self._task.done():
@@ -75,9 +57,11 @@ class BinanceWSHub:
             self._task.cancel()
 
     def set_watchlist(self, symbols: list[str]) -> None:
-        self._desired_symbols = {s.upper() for s in symbols}
-
-    # ── Public reads (used by engines) ───────────────────────────────────────
+        new = {s.upper() for s in symbols}
+        if new != self._desired_symbols:
+            self._desired_symbols = new
+            self._watchlist_version += 1
+            log.info("Watchlist updated (%d symbols) v%d", len(new), self._watchlist_version)
 
     def discover_coins(
         self,
@@ -93,28 +77,28 @@ class BinanceWSHub:
             t
             for sym, t in self._tickers.items()
             if sym.endswith(quote_asset)
-            and float(t.get("q") or t.get("quoteVolume") or 0) >= min_quote_volume
+            and float(t.get("q") or 0) >= min_quote_volume
         ]
 
         def pct(t: dict) -> float:
-            return float(t.get("P") or t.get("priceChangePercent") or 0)
+            return float(t.get("P") or 0)
 
         def vol(t: dict) -> float:
-            return float(t.get("q") or t.get("quoteVolume") or 0)
+            return float(t.get("q") or 0)
 
         gainers = sorted(usdt, key=pct, reverse=True)[:top_gainers]
         losers = sorted(usdt, key=pct)[:top_losers]
         volume = sorted(usdt, key=vol, reverse=True)[:top_volume]
-        trending_sorted = sorted(usdt, key=lambda t: abs(pct(t)) * (vol(t) ** 0.5), reverse=True)[
-            :trending
-        ]
+        trending_sorted = sorted(
+            usdt, key=lambda t: abs(pct(t)) * (vol(t) ** 0.5), reverse=True
+        )[:trending]
 
         seen: set[str] = set()
         result: list[DiscoveredCoin] = []
 
         def add(items: list[dict], source: str) -> None:
             for i, t in enumerate(items):
-                sym = (t.get("s") or t.get("symbol") or "").upper()
+                sym = (t.get("s") or "").upper()
                 if not sym or sym in seen:
                     continue
                 seen.add(sym)
@@ -136,10 +120,9 @@ class BinanceWSHub:
 
     def get_window(self, symbol: str, interval: str = "1m", limit: int = 100) -> CandleWindow | None:
         buf = self._candles.get(symbol.upper())
-        if not buf or len(buf) < 20:
+        if not buf or len(buf) < 15:
             return None
-        candles = list(buf)[-limit:]
-        return CandleWindow(symbol=symbol.upper(), interval=interval, candles=candles)
+        return CandleWindow(symbol=symbol.upper(), interval=interval, candles=list(buf)[-limit:])
 
     def get_order_book(self, symbol: str) -> dict:
         return dict(self._books.get(symbol.upper(), {}))
@@ -150,11 +133,6 @@ class BinanceWSHub:
     def ticker_count(self) -> int:
         return len(self._tickers)
 
-    def candle_count(self, symbol: str) -> int:
-        return len(self._candles.get(symbol.upper(), ()))
-
-    # ── Background loop ──────────────────────────────────────────────────────
-
     async def _run_forever(self) -> None:
         log.info("Binance WS hub starting")
         while self._running:
@@ -163,34 +141,33 @@ class BinanceWSHub:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log.warning("WS hub session ended: %s — reconnect in 3s", e)
-                await asyncio.sleep(3)
+                log.warning("WS session error: %s — retry 2s", e)
+                await asyncio.sleep(2)
         log.info("Binance WS hub stopped")
 
     async def _session(self) -> None:
-        # Always listen to all mini tickers for discovery
         streams = ["!ticker@arr"]
-        # Dynamic per-symbol streams rebuilt each reconnect
-        symbols = sorted(self._desired_symbols)[:40]
+        symbols = sorted(self._desired_symbols)[:30]
         for sym in symbols:
             s = sym.lower()
             streams.append(f"{s}@kline_1m")
             streams.append(f"{s}@depth20@100ms")
             streams.append(f"{s}@markPrice@1s")
 
-        path = "/stream?streams=" + "/".join(streams)
-        url = WS_BASE + path
+        url = f"{WS_BASE}/stream?streams=" + "/".join(streams)
+        version = self._watchlist_version
         log.info("WS connect streams=%d symbols=%d", len(streams), len(symbols))
 
-        async with websockets.connect(url, ping_interval=20, ping_timeout=20, max_size=8_000_000) as ws:
-            last_rebuild = time.time()
+        async with websockets.connect(
+            url, ping_interval=20, ping_timeout=20, max_size=8_000_000
+        ) as ws:
             while self._running:
+                if self._watchlist_version != version:
+                    log.info("Watchlist version changed — reconnect")
+                    break
                 try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                    raw = await asyncio.wait_for(ws.recv(), timeout=25)
                 except asyncio.TimeoutError:
-                    # rebuild subscription set if watchlist changed
-                    if time.time() - last_rebuild > 45:
-                        break
                     continue
 
                 try:
@@ -202,38 +179,33 @@ class BinanceWSHub:
                 stream = msg.get("stream", "")
 
                 if stream == "!ticker@arr" or isinstance(data, list):
-                    self._handle_tickers(data if isinstance(data, list) else [])
+                    if isinstance(data, list):
+                        for t in data:
+                            sym = (t.get("s") or "").upper()
+                            if sym:
+                                self._tickers[sym] = t
                 elif "@kline_" in stream:
                     self._handle_kline(data)
                 elif "@depth" in stream:
-                    self._handle_depth(stream, data)
+                    sym = stream.split("@")[0].upper()
+                    self._books[sym] = {
+                        "bids": data.get("b") or [],
+                        "asks": data.get("a") or [],
+                    }
                 elif "@markPrice" in stream:
-                    self._handle_mark(data)
-
-                # Hot-reload streams when watchlist changes
-                if time.time() - last_rebuild > 60:
-                    current = set()
-                    for s in streams:
-                        if s.startswith("!") or "@" not in s:
-                            continue
-                        current.add(s.split("@")[0].upper())
-                    if current != {x.upper() for x in self._desired_symbols}:
-                        log.info("Watchlist changed — reconnecting streams")
-                        break
-                    last_rebuild = time.time()
-
-    def _handle_tickers(self, arr: list) -> None:
-        for t in arr:
-            sym = (t.get("s") or "").upper()
-            if not sym:
-                continue
-            self._tickers[sym] = t
-        self._last_ticker_ts = time.time()
+                    sym = (data.get("s") or "").upper()
+                    if sym:
+                        self._mark[sym] = {
+                            "symbol": sym,
+                            "markPrice": data.get("p"),
+                            "lastFundingRate": data.get("r"),
+                            "nextFundingTime": data.get("T"),
+                        }
 
     def _handle_kline(self, data: dict) -> None:
         k = data.get("k") or {}
         sym = (data.get("s") or k.get("s") or "").upper()
-        if not sym:
+        if not sym or "t" not in k:
             return
         try:
             candle = Candle(
@@ -243,57 +215,25 @@ class BinanceWSHub:
                 low=float(k["l"]),
                 close=float(k["c"]),
                 volume=float(k["v"]),
-                close_time=int(k["T"]),
+                close_time=int(k.get("T") or 0),
             )
-        except (KeyError, TypeError, ValueError):
+        except (TypeError, ValueError):
             return
 
         buf = self._candles[sym]
         if buf and buf[-1].open_time == candle.open_time:
             buf[-1] = candle
         else:
-            # only append when previous closed or first
-            if not buf or k.get("x") or candle.open_time > buf[-1].open_time:
-                if buf and not k.get("x") and candle.open_time == buf[-1].open_time:
-                    buf[-1] = candle
-                elif buf and candle.open_time > buf[-1].open_time:
-                    buf.append(candle)
-                elif not buf:
-                    buf.append(candle)
-                else:
-                    buf[-1] = candle
+            buf.append(candle)
 
-    def _handle_depth(self, stream: str, data: dict) -> None:
-        sym = stream.split("@")[0].upper() if "@" in stream else ""
-        if not sym:
-            return
-        self._books[sym] = {
-            "bids": data.get("b") or data.get("bids") or [],
-            "asks": data.get("a") or data.get("asks") or [],
-        }
-
-    def _handle_mark(self, data: dict) -> None:
-        sym = (data.get("s") or "").upper()
-        if not sym:
-            return
-        self._mark[sym] = {
-            "symbol": sym,
-            "markPrice": data.get("p") or data.get("markPrice"),
-            "lastFundingRate": data.get("r") or data.get("lastFundingRate"),
-            "nextFundingTime": data.get("T") or data.get("nextFundingTime"),
-        }
-
-
-# ── Module-level helpers matching previous binance.py surface ────────────────
 
 async def ensure_hub() -> BinanceWSHub:
     hub = BinanceWSHub.instance()
     await hub.ensure_started()
-    # wait briefly for first ticker snapshot
-    for _ in range(40):
+    for _ in range(50):
         if hub.ticker_count() > 10:
             break
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.2)
     return hub
 
 
@@ -302,42 +242,34 @@ async def discover_coins(**kwargs) -> list[DiscoveredCoin]:
     coins = hub.discover_coins(**kwargs)
     if coins:
         hub.set_watchlist([c.symbol for c in coins])
-        # allow kline streams to attach on next reconnect cycle; nudge by waiting
-        await asyncio.sleep(1.5)
+        # wait for reconnect + some kline updates
+        await asyncio.sleep(2.5)
     return coins
 
 
 async def fetch_klines(symbol: str, interval: str = "1m", limit: int = 100) -> CandleWindow:
     hub = await ensure_hub()
     hub.set_watchlist(list(hub._desired_symbols | {symbol.upper()}))
-    # wait for buffer to grow
-    for _ in range(30):
+    for _ in range(40):
         w = hub.get_window(symbol, interval=interval, limit=limit)
-        if w and len(w.candles) >= min(30, limit):
+        if w and len(w.candles) >= 15:
             return w
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.4)
     w = hub.get_window(symbol, interval=interval, limit=limit)
     if not w:
-        raise RuntimeError(f"No WS candle buffer yet for {symbol} — hub warming up")
+        raise RuntimeError(f"No WS candle buffer for {symbol} yet (warming up)")
     return w
 
 
 async def fetch_order_book(symbol: str, limit: int = 20) -> dict:
     hub = await ensure_hub()
-    book = hub.get_order_book(symbol)
-    if book:
-        return book
-    return {"bids": [], "asks": []}
+    return hub.get_order_book(symbol) or {"bids": [], "asks": []}
 
 
 async def fetch_premium_index(symbol: str) -> dict:
     hub = await ensure_hub()
-    mark = hub.get_mark(symbol)
-    if mark:
-        return mark
-    return {"lastFundingRate": 0, "markPrice": None}
+    return hub.get_mark(symbol) or {"lastFundingRate": 0, "markPrice": None}
 
 
 async def fetch_open_interest(symbol: str) -> dict:
-    # Open interest is not on the public combined WS without auth; return neutral.
     return {"openInterest": 0}
