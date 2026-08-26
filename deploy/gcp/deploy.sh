@@ -13,17 +13,30 @@ set -a
 source .env.production
 set +a
 
-docker compose --env-file .env.production -f docker-compose.prod.yml build --pull
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --remove-orphans
+COMPOSE_ARGS=(--env-file .env.production -f docker-compose.prod.yml)
+TLS_CERT="/etc/letsencrypt/live/xora.xtinex.com/fullchain.pem"
+TLS_KEY="/etc/letsencrypt/live/xora.xtinex.com/privkey.pem"
+TLS_ENABLED=false
+
+if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.tls.yml)
+  TLS_ENABLED=true
+  echo "TLS certificate detected; enabling HTTPS for xora.xtinex.com."
+else
+  echo "TLS certificate not present; deploying HTTP-only."
+fi
+
+docker compose "${COMPOSE_ARGS[@]}" build --pull
+docker compose "${COMPOSE_ARGS[@]}" up -d --remove-orphans
 
 echo
 echo "Deployment status:"
-docker compose --env-file .env.production -f docker-compose.prod.yml ps
+docker compose "${COMPOSE_ARGS[@]}" ps
 
 echo
 echo "WebSocket health check:"
 for i in {1..12}; do
-  if docker compose --env-file .env.production -f docker-compose.prod.yml exec -T backend \
+  if docker compose "${COMPOSE_ARGS[@]}" exec -T backend \
     python - <<'PY'
 import asyncio
 import json
@@ -51,7 +64,11 @@ async def main():
 asyncio.run(main())
 PY
   then
-    HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+    if [[ "$TLS_ENABLED" == true ]]; then
+      HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 https://127.0.0.1/ --resolve xora.xtinex.com:443:127.0.0.1 -H 'Host: xora.xtinex.com' || true)"
+    else
+      HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+    fi
     if [[ "$HOME_CODE" == "200" ]]; then
       echo "WebSocket backend and frontend are healthy."
       exit 0
@@ -61,5 +78,7 @@ PY
 done
 
 echo "WebSocket health check did not become ready. Inspect logs with:"
-echo "docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=200"
+printf 'docker compose'
+printf ' %q' "${COMPOSE_ARGS[@]}"
+echo ' logs --tail=200'
 exit 1
