@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xora_chart_api
+    ports:
+      - "8030:8030"
+    environment:
+      - PORT=8030
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8030/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Browser will call the host-mapped backend port
+        VITE_API_BASE: http://localhost:8030
+    container_name: xora_chart_ui
+    ports:
+      - "3030:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
