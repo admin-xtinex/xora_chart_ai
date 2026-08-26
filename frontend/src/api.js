@@ -1,4 +1,9 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8030'
+const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '')
+
+function url(path) {
+  const p = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE}${p}`
+}
 
 async function json(res, label) {
   if (!res.ok) {
@@ -19,27 +24,27 @@ export async function fetchPatterns({ direction, type } = {}) {
   if (direction) params.set('direction', direction)
   if (type) params.set('type', type)
   const qs = params.toString()
-  const res = await fetch(`${API_BASE}/api/v1/patterns${qs ? `?${qs}` : ''}`)
+  const res = await fetch(url(`/api/v1/patterns${qs ? `?${qs}` : ''}`))
   return json(res, 'patterns')
 }
 
 export async function fetchHealth() {
-  const res = await fetch(`${API_BASE}/api/v1/health`)
+  const res = await fetch(url('/api/v1/health'))
   return json(res, 'health')
 }
 
 export async function fetchOpportunities(limit = 30) {
-  const res = await fetch(`${API_BASE}/api/v1/opportunities?limit=${limit}`)
+  const res = await fetch(url(`/api/v1/opportunities?limit=${limit}`))
   return json(res, 'opportunities')
 }
 
 export async function runCycle() {
-  const res = await fetch(`${API_BASE}/api/v1/cycles/run`, { method: 'POST' })
+  const res = await fetch(url('/api/v1/cycles/run'), { method: 'POST' })
   return json(res, 'scan')
 }
 
 export async function analyzeSymbol(symbol) {
-  const res = await fetch(`${API_BASE}/api/v1/analyze`, {
+  const res = await fetch(url('/api/v1/analyze'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ symbol }),
@@ -48,12 +53,12 @@ export async function analyzeSymbol(symbol) {
 }
 
 export async function fetchSettings() {
-  const res = await fetch(`${API_BASE}/api/v1/settings`)
+  const res = await fetch(url('/api/v1/settings'))
   return json(res, 'settings')
 }
 
 export async function updateSettings(patch) {
-  const res = await fetch(`${API_BASE}/api/v1/settings`, {
+  const res = await fetch(url('/api/v1/settings'), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -63,22 +68,22 @@ export async function updateSettings(patch) {
 
 export async function fetchPositions(status) {
   const qs = status ? `?status=${status}` : ''
-  const res = await fetch(`${API_BASE}/api/v1/positions${qs}`)
+  const res = await fetch(url(`/api/v1/positions${qs}`))
   return json(res, 'positions')
 }
 
 export async function fetchTradeSummary() {
-  const res = await fetch(`${API_BASE}/api/v1/positions/history/summary`)
+  const res = await fetch(url('/api/v1/positions/history/summary'))
   return json(res, 'summary')
 }
 
 export async function managePositions() {
-  const res = await fetch(`${API_BASE}/api/v1/positions/manage`, { method: 'POST' })
+  const res = await fetch(url('/api/v1/positions/manage'), { method: 'POST' })
   return json(res, 'manage')
 }
 
 export async function openDemoTrade(opportunityId) {
-  const res = await fetch(`${API_BASE}/api/v1/positions`, {
+  const res = await fetch(url('/api/v1/positions'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ opportunity_id: opportunityId }),
@@ -87,7 +92,7 @@ export async function openDemoTrade(opportunityId) {
 }
 
 export async function closeTrade(posId, exitPrice) {
-  const res = await fetch(`${API_BASE}/api/v1/positions/${posId}/close`, {
+  const res = await fetch(url(`/api/v1/positions/${posId}/close`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(exitPrice != null ? { exit_price: exitPrice, reason: 'manual' } : { reason: 'manual' }),
