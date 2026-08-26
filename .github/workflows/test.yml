@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: [self-hosted, linux, x64, xora-gcp]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
