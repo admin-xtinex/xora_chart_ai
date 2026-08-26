@@ -2,15 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps (minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first (better layer caching)
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY data/ ./data/
+COPY config/ ./config/
 COPY chart_reference/ ./chart_reference/
 
 RUN pip install --no-cache-dir -e .
