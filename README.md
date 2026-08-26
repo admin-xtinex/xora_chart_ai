@@ -1,20 +1,12 @@
 # XORA Chart AI
 
-**Chart Pattern Recognition & Educational Intelligence** for the XORA Prediction Platform.
+**Live chart-pattern scanner** for Binance Futures.
 
-This service provides:
-
-- Structured knowledge of classic price-action patterns
-- Educational reference cards (the images in `chart_reference/`)
-- A modern React frontend to browse patterns
-- A pluggable `chart_pattern` feature module compatible with `xora_trade_ai`
-- Future vision / LLM pattern detection (Phase 2+)
-
-It never executes trades. It only produces pattern features and explanations that the Prediction AI can consume.
+The system continuously discovers active coins, matches them against a curated pattern library, ranks the best setups, and surfaces them on a dashboard. Users do not upload charts — the platform scans automatically.
 
 ---
 
-## Quick start (Docker — recommended)
+## Quick start
 
 ```bash
 git clone https://github.com/admin-xtinex/xora_chart_ai.git
@@ -22,86 +14,72 @@ cd xora_chart_ai
 docker compose up --build
 ```
 
-| Service  | URL |
-|----------|-----|
-| **Frontend** | http://localhost:3030 |
-| **Backend API** | http://localhost:8030 |
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3030 |
+| Backend API | http://localhost:8030 |
 | API docs | http://localhost:8030/docs |
-| Health | http://localhost:8030/api/v1/health |
-| Patterns | http://localhost:8030/api/v1/patterns |
-
-Port **8030** is used for the API (8000 is commonly taken by other XORA services).
+| Trigger scan | `POST http://localhost:8030/api/v1/cycles/run` |
+| Opportunities | http://localhost:8030/api/v1/opportunities |
 
 ---
 
-## Local development (without Docker)
+## Pipeline
 
-### Backend
+```
+Scheduler (1 min)
+  → Discovery (≈20 coins)
+  → 100 × 1m candles
+  → Pattern Matcher
+  → AI Validator (threshold-gated)
+  → Trade Generator (Entry / SL / TP / RR)
+  → Ranking
+  → API → Dashboard
+```
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## Local development
+
+**Backend**
 
 ```bash
 pip install -e .
 uvicorn xora_chart.main:app --host 0.0.0.0 --port 8030 --reload
 ```
 
-### Frontend
+**Worker** (optional — or just `POST /api/v1/cycles/run`)
 
 ```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:3030 (proxies /api → :8030)
+XORA_API_BASE=http://localhost:8030 python -m xora_chart.worker
+```
+
+**Frontend**
+
+```bash
+cd frontend && npm install && npm run dev
 ```
 
 ---
 
-## Phase 1 Status: **COMPLETE**
+## Phase status
 
-See [`docs/PHASE1.md`](docs/PHASE1.md).
-
-| Deliverable | Status |
-|-------------|--------|
-| Project scaffolding & identity | ✅ |
-| Complete pattern catalog (10 patterns) | ✅ |
-| Structured pattern data (JSON + Python) | ✅ |
-| FastAPI backend on **port 8030** | ✅ |
-| React + Tailwind frontend | ✅ |
-| Docker + docker-compose (backend + frontend) | ✅ |
-| Module contract skeleton for `xora_trade_ai` | ✅ |
+| Phase | Scope | Status |
+|-------|--------|--------|
+| 1 | Educational catalog + React UI + Docker | ✅ Complete |
+| 2 | Full pipeline structure, discovery, matcher skeleton, worker, opportunity API | ✅ Structure complete |
+| 3 | Real similarity + AI validator + Opportunity Board UI | Pending |
+| 4 | Persistence, learning loop, production hardening | Pending |
 
 ---
 
-## Pattern Library
+## Pattern library (seed)
 
-| Pattern | Direction | Type |
-|---------|-----------|------|
-| Breakout + Retest | Bullish | Continuation |
-| Breakdown + Retest | Bearish | Continuation |
-| Head and Shoulders | Bearish | Reversal |
-| Double Top | Bearish | Reversal |
-| Double Bottom | Bullish | Reversal |
-| Cup and Handle | Bullish | Continuation |
-| Bull Flag | Bullish | Continuation |
-| Bear Flag | Bearish | Continuation |
-| Bull Pennant | Bullish | Continuation |
-| Bear Pennant | Bearish | Continuation |
+Breakout/Retest, Breakdown/Retest, Head & Shoulders, Double Top/Bottom, Cup & Handle, Bull/Bear Flag, Bull/Bear Pennant.
 
----
-
-## Architecture (Phase 1)
-
-```
-┌─────────────────┐     ┌──────────────────────┐
-│  React Frontend │────▶│  FastAPI Backend     │
-│  :3030 (nginx)  │     │  :8030               │
-└─────────────────┘     │  /api/v1/patterns    │
-                        │  /references/*       │
-                        └──────────────────────┘
-```
-
----
-
-## Integration with xora_trade_ai
-
-This repo will later export a drop-in module `chart_pattern` that implements the `Analyzer` protocol. Phase 1 only provides the skeleton + catalog. Detection logic lands in Phase 2.
+Reference image folders live under `patterns/` (see `patterns/README.md`).
 
 ---
 
