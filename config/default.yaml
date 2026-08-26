@@ -20,7 +20,6 @@ matcher:
   ai_threshold: 70.0
   max_matches_per_symbol: 3
 
-# ── Analysis Engine ──────────────────────────────────────────────────────────
 analysis:
   weights:
     volume: 0.30
@@ -29,7 +28,6 @@ analysis:
     open_interest: 0.10
     volatility: 0.20
 
-# ── Decision Engine ──────────────────────────────────────────────────────────
 decision:
   min_similarity: 55.0
   min_analysis_score: 45.0
@@ -37,12 +35,12 @@ decision:
   min_risk_reward: 1.5
   rr_targets: [1.5, 2.5, 3.5]
 
-# ── Trade Engine ─────────────────────────────────────────────────────────────
 trade:
-  mode: demo                 # demo | live  (env XORA_TRADE_MODE overrides)
-  live_enabled: false        # must be true + mode=live for real orders
+  mode: demo
+  live_enabled: false
+  auto_trade: false          # when true, APPROVE → demo open automatically
   demo_equity: 10000
-  risk_percent: 0.5          # % of equity risked per trade
+  risk_percent: 0.5
   default_leverage: 3
   max_leverage: 5
   max_open_positions: 5
