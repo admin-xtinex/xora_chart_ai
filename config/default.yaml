@@ -13,19 +13,20 @@ discovery:
 market_data:
   interval: "1m"
   candle_limit: 100
-  venue: binance_futures
+  venue: binance_futures_websocket
+  minimum_ws_candles: 20
 
 matcher:
   min_similarity: 55.0
-  ai_threshold: 70.0
   max_matches_per_symbol: 3
 
 analysis:
+  # Only signals available from approved WebSocket streams are weighted.
   weights:
-    volume: 0.30
-    order_book: 0.25
+    volume: 0.35
+    order_book: 0.30
     funding: 0.15
-    open_interest: 0.10
+    open_interest: 0.00
     volatility: 0.20
 
 decision:
@@ -56,12 +57,6 @@ ranking:
     confidence: 0.25
     risk_reward: 0.15
     analysis: 0.20
-
-ai:
-  enabled: true
-  provider: openai_compatible
-  model: gpt-4o-mini
-  base_url: https://api.openai.com/v1
 
 store:
   max_cycles_kept: 50
