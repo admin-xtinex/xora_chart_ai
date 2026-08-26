@@ -1,0 +1,42 @@
+# Pattern Repository registry
+# Each key maps to a folder under patterns/ containing reference examples.
+# Educational metadata still lives in data/patterns.json.
+
+patterns:
+  - key: breakout_retest
+    enabled: true
+    folder: breakout_retest
+  - key: breakdown_retest
+    enabled: true
+    folder: breakdown_retest
+  - key: head_and_shoulders
+    enabled: true
+    folder: head_and_shoulders
+  - key: double_top
+    enabled: true
+    folder: double_top
+  - key: double_bottom
+    enabled: true
+    folder: double_bottom
+  - key: cup_and_handle
+    enabled: true
+    folder: cup_and_handle
+  - key: bull_flag
+    enabled: true
+    folder: bull_flag
+  - key: bear_flag
+    enabled: true
+    folder: bear_flag
+  - key: bull_pennant
+    enabled: true
+    folder: bull_pennant
+  - key: bear_pennant
+    enabled: true
+    folder: bear_pennant
+
+# Future patterns (disabled until references are added)
+# - key: ascending_triangle
+# - key: ict_breaker
+# - key: liquidity_sweep
+# - key: fake_breakout
+# - key: wyckoff_accumulation
