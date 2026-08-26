@@ -1,35 +1,29 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from xora_chart.api.v1 import router as v1_router
-from xora_chart.services.binance_ws import BinanceWSHub
+from xora_chart.services.binance_ws import BinanceWSHub, ensure_hub
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    hub = BinanceWSHub.instance()
-    await hub.ensure_started()
+    # Start the WebSocket hub and actively seed tickers when the stream is slow
+    # to become ready. This avoids a freshly deployed UI showing zero symbols.
+    hub = await ensure_hub()
     yield
     hub.stop()
 
 
 app = FastAPI(
     title="XORA Chart AI",
-    description="Engine-based live scanner — Analysis · Decision · Trade (Binance via WebSocket)",
-    version="0.3.0",
+    description="Reference-chart gated live scanner — Visual Compare · Analysis · Decision · Trade",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# Production is same-origin behind Nginx, so permissive browser CORS is not
+# required. Keeping the API same-origin also avoids accidental cross-site use.
 app.include_router(v1_router)
 
 
@@ -38,10 +32,11 @@ def root() -> dict:
     hub = BinanceWSHub.instance()
     return {
         "service": "xora-chart-ai",
-        "phase": 3,
-        "engines": ["analysis", "decision", "trade"],
-        "binance": "websocket",
+        "phase": 4,
+        "engines": ["reference-visual", "analysis", "decision", "trade"],
+        "binance": "websocket+seed",
         "ws_tickers": hub.ticker_count(),
+        "reference_gate": True,
         "port": 8030,
         "docs": "/docs",
         "opportunities": "/api/v1/opportunities",
