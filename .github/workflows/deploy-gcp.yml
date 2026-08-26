@@ -51,6 +51,32 @@ jobs:
           ./deploy/gcp/deploy.sh
           sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
+      - name: Diagnose Binance WebSocket
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Backend recent WebSocket logs ==="
+          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake' | tail -n 120 || true
+
+          echo "=== Direct VM Binance Futures WebSocket probe ==="
+          docker run --rm python:3.12-slim sh -lc '
+            pip install -q websockets && python - <<"PY"
+          import asyncio
+          import websockets
+
+          async def main():
+              url = "wss://fstream.binance.com/ws/!ticker@arr"
+              try:
+                  async with websockets.connect(url, open_timeout=12, close_timeout=3) as ws:
+                      msg = await asyncio.wait_for(ws.recv(), timeout=12)
+                      print("BINANCE_WS_OK", len(msg))
+              except Exception as exc:
+                  print("BINANCE_WS_ERROR", type(exc).__name__, repr(exc))
+
+          asyncio.run(main())
+          PY
+          '
+
       - name: Verify local frontend
         shell: bash
         run: |
