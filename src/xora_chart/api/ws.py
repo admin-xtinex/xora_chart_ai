@@ -13,9 +13,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from xora_chart.application.live import enrich_position, last_price
 from xora_chart.application.pipeline import run_cycle
+from xora_chart.application.reference_visual import library_status
 from xora_chart.application.symbol_scan import analyze_symbol
 from xora_chart.catalog import list_patterns
-from xora_chart.domain.enums import PositionStatus
+from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
 from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
@@ -39,20 +40,17 @@ def _health() -> dict[str, Any]:
     latest = store.latest_cycle()
     settings = store.get_settings()
     hub = BinanceWSHub.instance()
-    try:
-        from xora_chart.application.reference_matcher import reference_status
-
-        ref = reference_status()
-    except Exception as exc:
-        ref = {"ready": False, "count": 0, "error": str(exc)}
+    ref = library_status()
+    connected = hub.websocket_connected()
+    refs_ready = int(ref.get("count", 0)) >= 10
 
     return {
-        "status": "ok",
+        "status": "ok" if connected and refs_ready else "degraded",
         "service": "xora-chart-ai",
         "transport": "websocket-only",
         "market_data": "binance-websocket-only",
         "rest_market_data": False,
-        "ws_connected": hub.websocket_connected(),
+        "ws_connected": connected,
         "ws_tickers": hub.ticker_count(),
         "ws_ready_symbols": hub.ready_symbol_count(),
         "ws_min_candles": MIN_CANDLES,
@@ -66,7 +64,7 @@ def _health() -> dict[str, Any]:
         "positions_open": len([p for p in store.list_positions() if p.status == PositionStatus.OPEN]),
         "reference_gate": True,
         "reference_images": int(ref.get("count", 0)),
-        "reference_ready": bool(ref.get("ready", False)),
+        "reference_ready": refs_ready,
     }
 
 
@@ -131,7 +129,7 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
         if not opp:
             raise RuntimeError("Opportunity not found")
         pos = open_from_opportunity(opp, store=store)
-        opp.status = type(opp.status).TRADED
+        opp.status = OpportunityStatus.TRADED
         store.update_opportunity(opp)
         return pos
     if action == "position.close":
