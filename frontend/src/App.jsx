@@ -17,6 +17,7 @@ function Badge({ children, tone = 'neutral' }) {
     rev: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
     buy: 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40',
     sell: 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40',
+    phase: 'bg-violet-500/15 text-violet-300 ring-1 ring-violet-500/30',
   }
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${tones[tone] || tones.neutral}`}>
@@ -33,21 +34,24 @@ function fmt(n, d = 4) {
   return n.toFixed(Math.min(d, 6))
 }
 
-function Section({ title, children }) {
+function Section({ title, children, accent }) {
   return (
-    <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">{title}</h3>
+    <section className={`rounded-xl border p-4 ${
+      accent ? 'bg-violet-500/10 border-violet-500/30' : 'bg-xora-800/60 border-xora-600/40'
+    }`}>
+      <h3 className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
+        accent ? 'text-violet-300' : 'text-slate-400'
+      }`}>{title}</h3>
       <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">{children}</div>
     </section>
   )
 }
 
-/* ═══════════════════ Opportunity Board ═══════════════════ */
-
 function OppCard({ opp, selected, onClick }) {
   const side = opp.trade?.side || '—'
   const isBuy = side === 'BUY'
   const sim = opp.best_match?.similarity
+  const phase = opp.analysis?.pattern_phase
   return (
     <button
       onClick={() => onClick(opp)}
@@ -63,6 +67,9 @@ function OppCard({ opp, selected, onClick }) {
         </div>
         <Badge tone={isBuy ? 'buy' : 'sell'}>{side}</Badge>
       </div>
+      {phase && (
+        <div className="text-[11px] text-violet-300/90 mb-1.5 line-clamp-1">{phase}</div>
+      )}
       <div className="flex items-center gap-2 flex-wrap text-[11px]">
         <span className="text-blue-300 font-mono">{sim != null ? `${sim.toFixed(0)}%` : '—'}</span>
         <span className="text-slate-600">·</span>
@@ -70,7 +77,6 @@ function OppCard({ opp, selected, onClick }) {
         <span className="text-slate-600">·</span>
         <span className="text-amber-300/90">{opp.trade?.confidence != null ? `${opp.trade.confidence.toFixed(0)}% conf` : '—'}</span>
       </div>
-      <div className="mt-2 text-[10px] text-slate-500 font-mono">rank {opp.rank_score?.toFixed?.(1) ?? opp.rank_score}</div>
     </button>
   )
 }
@@ -82,7 +88,7 @@ function OppDetail({ opp }) {
         <div className="text-center px-6">
           <div className="text-4xl mb-3 opacity-40">🎯</div>
           <p className="text-sm">Select an opportunity or run a scan</p>
-          <p className="text-xs text-slate-600 mt-2">Live 1m Binance candles + explained structure</p>
+          <p className="text-xs text-slate-600 mt-2">Shows where price sits inside the matched pattern</p>
         </div>
       </div>
     )
@@ -100,6 +106,7 @@ function OppDetail({ opp }) {
           <h2 className="text-xl font-bold tracking-tight">{opp.symbol}</h2>
           <Badge tone={isBuy ? 'buy' : 'sell'}>{t.side || '—'}</Badge>
           <Badge tone={m.direction === 'bullish' ? 'bull' : 'bear'}>{m.direction || '—'}</Badge>
+          {a.pattern_phase && <Badge tone="phase">{a.pattern_phase}</Badge>}
           {opp.ai_validated && <Badge tone="cont">AI validated</Badge>}
         </div>
         <p className="text-xs text-slate-500 mt-1">
@@ -108,14 +115,20 @@ function OppDetail({ opp }) {
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Summary explanation */}
-        {(a.summary || a.narrative) && (
-          <Section title="Analysis summary">
-            {a.summary || a.narrative}
+        {/* Where price is now — primary insight */}
+        {(a.pattern_phase || a.pattern_phase_detail || a.current_area) && (
+          <Section title="Where price is now in the pattern" accent>
+            {a.pattern_phase && (
+              <div className="text-base font-semibold text-violet-200 mb-2">{a.pattern_phase}</div>
+            )}
+            {a.pattern_phase_detail || a.current_area}
           </Section>
         )}
 
-        {/* Live chart */}
+        {(a.summary) && (
+          <Section title="Pattern analysis">{a.summary}</Section>
+        )}
+
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
             Live structure · {opp.interval || '1m'}
@@ -123,7 +136,6 @@ function OppDetail({ opp }) {
           <CandleChart candles={opp.candles || []} trade={opp.trade} height={360} />
         </section>
 
-        {/* Levels cards */}
         <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="rounded-lg bg-xora-800 border border-xora-600/50 p-3">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Entry</div>
@@ -151,21 +163,13 @@ function OppDetail({ opp }) {
           </div>
         </section>
 
-        {/* Why + levels explanation */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {a.why_this_trade && (
-            <Section title="Why this trade">{a.why_this_trade}</Section>
-          )}
-          {a.levels_explanation && (
-            <Section title="How levels were set">{a.levels_explanation}</Section>
-          )}
+          {a.why_this_trade && <Section title="Why this trade">{a.why_this_trade}</Section>}
+          {a.levels_explanation && <Section title="How levels were set">{a.levels_explanation}</Section>}
         </div>
 
-        {a.market_context && (
-          <Section title="Market context">{a.market_context}</Section>
-        )}
+        {a.market_context && <Section title="Market context">{a.market_context}</Section>}
 
-        {/* Structure features explained */}
         {a.structure_features?.length > 0 && (
           <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Structure features</h3>
@@ -186,14 +190,10 @@ function OppDetail({ opp }) {
           </section>
         )}
 
-        {/* Validation */}
         {(a.validation || opp.ai_rationale) && (
-          <Section title="Validation">
-            {a.validation || opp.ai_rationale}
-          </Section>
+          <Section title="Validation">{a.validation || opp.ai_rationale}</Section>
         )}
 
-        {/* Other matches */}
         {opp.all_matches?.length > 1 && (
           <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Other pattern matches</h3>
@@ -311,8 +311,6 @@ function OpportunityBoard() {
     </div>
   )
 }
-
-/* ═══════════════════ Pattern Library ═══════════════════ */
 
 function PatternCard({ pattern, selected, onClick }) {
   const isBull = pattern.direction === 'bullish'
