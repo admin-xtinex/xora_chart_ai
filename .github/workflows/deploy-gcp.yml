@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GCP_VM_HOST: 35.209.66.225
+  GCP_VM_USER: info
+
 jobs:
   deploy:
     name: Deploy production
@@ -23,25 +27,20 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Validate required secrets
+      - name: Validate SSH secret
         shell: bash
         env:
-          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
-          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
           GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          for name in GCP_VM_HOST GCP_VM_USER GCP_SSH_PRIVATE_KEY; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing required GitHub Actions secret: $name" >&2
-              exit 1
-            fi
-          done
+          if [[ -z "${GCP_SSH_PRIVATE_KEY:-}" ]]; then
+            echo "Missing required GitHub Actions secret: GCP_SSH_PRIVATE_KEY" >&2
+            exit 1
+          fi
 
       - name: Configure SSH
         shell: bash
         env:
-          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
           GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
         run: |
           set -euo pipefail
@@ -53,8 +52,6 @@ jobs:
       - name: Deploy XORA
         shell: bash
         env:
-          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
-          GCP_VM_USER: ${{ secrets.GCP_VM_USER }}
           GCP_DEPLOY_PATH: ${{ secrets.GCP_DEPLOY_PATH }}
         run: |
           set -euo pipefail
@@ -62,6 +59,7 @@ jobs:
 
           ssh -i ~/.ssh/xora_gcp \
             -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
             -o ServerAliveInterval=30 \
             "$GCP_VM_USER@$GCP_VM_HOST" \
             "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
@@ -97,8 +95,6 @@ jobs:
 
       - name: Public health check
         shell: bash
-        env:
-          GCP_VM_HOST: ${{ secrets.GCP_VM_HOST }}
         run: |
           set -euo pipefail
           for i in {1..12}; do
