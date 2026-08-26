@@ -10,6 +10,7 @@ from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
 from xora_chart.engines.trade import close_position, list_positions
 from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
+from xora_chart.services.binance_ws import BinanceWSHub
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
@@ -19,14 +20,19 @@ def health() -> dict:
     store = Store.instance()
     latest = store.latest_cycle()
     settings = store.get_settings()
+    hub = BinanceWSHub.instance()
     return {
         "status": "ok",
         "service": "xora-chart-ai",
         "phase": 3,
         "engines": ["analysis", "decision", "trade"],
+        "binance": "websocket+seed",
+        "ws_tickers": hub.ticker_count(),
         "auto_trade": settings.get("auto_trade", False),
         "trade_mode": settings.get("trade_mode", "demo"),
         "latest_cycle_id": latest.cycle_id if latest else None,
+        "latest_cycle_errors": (latest.errors[:5] if latest else []),
+        "latest_opportunities": len(latest.opportunities) if latest else 0,
         "opportunities_cached": len(store.list_opportunities()),
         "positions_open": len([p for p in store.list_positions() if p.status == PositionStatus.OPEN]),
     }
