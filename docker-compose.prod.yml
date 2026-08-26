@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: deploy/gcp/Dockerfile.frontend
       args:
-        VITE_API_BASE: "/api"
+        VITE_API_BASE: ""
     container_name: xora_chart_ui
     ports:
       - "80:80"
