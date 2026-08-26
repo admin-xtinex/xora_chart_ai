@@ -7,7 +7,7 @@ from xora_chart.application.pipeline import run_cycle
 from xora_chart.catalog import get_pattern, list_patterns
 from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
-from xora_chart.engines.trade import close_position, list_positions
+from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
 from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
 from xora_chart.services.binance_ws import BinanceWSHub
@@ -35,6 +35,7 @@ def health() -> dict:
         "latest_opportunities": len(latest.opportunities) if latest else 0,
         "opportunities_cached": len(store.list_opportunities()),
         "positions_open": len([p for p in store.list_positions() if p.status == PositionStatus.OPEN]),
+        "positions_closed_last_cycle": latest.positions_closed if latest else 0,
     }
 
 
@@ -103,6 +104,7 @@ class OpenFromOpportunityBody(BaseModel):
 
 class CloseBody(BaseModel):
     exit_price: float | None = Field(None, description="Optional mark price")
+    reason: str = "manual"
 
 
 @router.get("/positions", response_model=list[Position])
@@ -133,6 +135,12 @@ def positions_summary() -> dict:
     }
 
 
+@router.post("/positions/manage", response_model=list[Position])
+def manage_positions() -> list[Position]:
+    """Check open demo trades against live price and close SL/TP hits."""
+    return manage_open_positions()
+
+
 @router.get("/positions/{pos_id}", response_model=Position)
 def position_detail(pos_id: str) -> Position:
     p = Store.instance().get_position(pos_id)
@@ -159,6 +167,10 @@ def open_trade(body: OpenFromOpportunityBody) -> Position:
 @router.post("/positions/{pos_id}/close", response_model=Position)
 def close_trade(pos_id: str, body: CloseBody | None = None) -> Position:
     try:
-        return close_position(pos_id, exit_price=body.exit_price if body else None)
+        return close_position(
+            pos_id,
+            exit_price=body.exit_price if body else None,
+            reason=(body.reason if body else "manual"),
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
