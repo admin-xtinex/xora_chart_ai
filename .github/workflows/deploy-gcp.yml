@@ -18,7 +18,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy production
-    runs-on: [self-hosted, linux, x64, xora-gcp]
+    runs-on: [self-hosted, linux, x64]
     environment: production
     timeout-minutes: 30
 
