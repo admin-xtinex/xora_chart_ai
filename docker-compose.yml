@@ -24,6 +24,7 @@ services:
     container_name: xora_chart_worker
     environment:
       - LOG_LEVEL=INFO
+      - XORA_API_BASE=http://backend:8030
     depends_on:
       backend:
         condition: service_healthy
