@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from xora_chart.application.pipeline import run_cycle
 from xora_chart.catalog import get_pattern, list_patterns
-from xora_chart.domain.enums import PositionStatus
+from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
 from xora_chart.engines.trade import close_position, list_positions
 from xora_chart.engines.trade.engine import open_from_opportunity
@@ -32,8 +32,6 @@ def health() -> dict:
     }
 
 
-# ── Settings (auto-trade toggle) ─────────────────────────────────────────────
-
 class SettingsPatch(BaseModel):
     auto_trade: bool | None = None
     trade_mode: str | None = None
@@ -46,11 +44,8 @@ def get_settings() -> dict:
 
 @router.patch("/settings")
 def patch_settings(body: SettingsPatch) -> dict:
-    patch = body.model_dump(exclude_none=True)
-    return Store.instance().update_settings(patch)
+    return Store.instance().update_settings(body.model_dump(exclude_none=True))
 
-
-# ── Patterns ─────────────────────────────────────────────────────────────────
 
 @router.get("/patterns", response_model=list[Pattern])
 def patterns(
@@ -68,8 +63,6 @@ def pattern_detail(key: str) -> Pattern:
     return p
 
 
-# ── Opportunities ────────────────────────────────────────────────────────────
-
 @router.get("/opportunities", response_model=list[Opportunity])
 def opportunities(limit: int = Query(20, ge=1, le=100)) -> list[Opportunity]:
     return Store.instance().list_opportunities(limit=limit)
@@ -82,8 +75,6 @@ def opportunity_detail(opp_id: str) -> Opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return o
 
-
-# ── Cycles ───────────────────────────────────────────────────────────────────
 
 @router.get("/cycles", response_model=list[CycleResult])
 def cycles(limit: int = Query(10, ge=1, le=50)) -> list[CycleResult]:
@@ -100,8 +91,6 @@ async def trigger_cycle() -> CycleResult:
     return await run_cycle()
 
 
-# ── Positions + history ──────────────────────────────────────────────────────
-
 class OpenFromOpportunityBody(BaseModel):
     opportunity_id: str
 
@@ -117,7 +106,6 @@ def positions(status: str | None = Query(None, description="open | closed")) -> 
 
 @router.get("/positions/history/summary")
 def positions_summary() -> dict:
-    """Trade history stats for the analysis panel."""
     all_pos = Store.instance().list_positions()
     closed = [p for p in all_pos if p.status == PositionStatus.CLOSED]
     open_p = [p for p in all_pos if p.status == PositionStatus.OPEN]
@@ -155,16 +143,11 @@ def open_trade(body: OpenFromOpportunityBody) -> Position:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     try:
         pos = open_from_opportunity(opp)
-        opp.status = OpportunityStatus_TRADED()
+        opp.status = OpportunityStatus.TRADED
         store.update_opportunity(opp)
         return pos
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-def OpportunityStatus_TRADED():
-    from xora_chart.domain.enums import OpportunityStatus
-    return OpportunityStatus.TRADED
 
 
 @router.post("/positions/{pos_id}/close", response_model=Position)
