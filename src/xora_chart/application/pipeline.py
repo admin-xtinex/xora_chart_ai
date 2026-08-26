@@ -10,6 +10,7 @@ from xora_chart.domain.enums import DecisionAction, OpportunityStatus
 from xora_chart.domain.models import CycleResult, Opportunity
 from xora_chart.engines.analysis import run_analysis
 from xora_chart.engines.decision import run_decision
+from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
 
 log = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ log = logging.getLogger(__name__)
 async def run_cycle(store: Store | None = None) -> CycleResult:
     store = store or Store.instance()
     result = CycleResult()
-    log.info("Cycle %s started", result.cycle_id)
+    log.info("Cycle %s started (auto_trade=%s)", result.cycle_id, store.auto_trade_enabled())
 
     try:
         coins = await discovery.run_discovery()
@@ -40,6 +41,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
         return result
 
     opportunities: list[Opportunity] = []
+    auto = store.auto_trade_enabled()
 
     for window in windows:
         try:
@@ -48,11 +50,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 continue
 
             best = matches[0]
-
-            # ── Analysis Engine ──────────────────────────────────────────
             market_analysis = await run_analysis(window, best)
-
-            # ── Decision Engine ──────────────────────────────────────────
             decision = run_decision(window, best, market_analysis)
 
             if decision.action == DecisionAction.REJECT:
@@ -92,6 +90,17 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 last_price=window.candles[-1].close if window.candles else None,
                 candles=list(window.candles),
             )
+
+            # Auto-enter demo trade when APPROVE + auto_trade on
+            if auto and decision.action == DecisionAction.APPROVE:
+                try:
+                    pos = open_from_opportunity(opp, store=store)
+                    opp.status = OpportunityStatus.TRADED
+                    log.info("Auto-trade opened %s pos=%s", opp.symbol, pos.id[:8])
+                except RuntimeError as e:
+                    log.info("Auto-trade skipped %s: %s", opp.symbol, e)
+                    result.errors.append(f"auto_trade {opp.symbol}: {e}")
+
             opportunities.append(opp)
         except Exception as e:
             log.warning("Symbol %s failed: %s", window.symbol, e)
