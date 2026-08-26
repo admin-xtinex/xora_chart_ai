@@ -38,6 +38,15 @@ export async function runCycle() {
   return json(res, 'scan')
 }
 
+export async function analyzeSymbol(symbol) {
+  const res = await fetch(`${API_BASE}/api/v1/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol }),
+  })
+  return json(res, 'analyze')
+}
+
 export async function fetchSettings() {
   const res = await fetch(`${API_BASE}/api/v1/settings`)
   return json(res, 'settings')
