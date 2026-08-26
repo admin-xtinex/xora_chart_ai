@@ -6,6 +6,7 @@ This service provides:
 
 - Structured knowledge of classic price-action patterns
 - Educational reference cards (the images in `chart_reference/`)
+- A modern React frontend to browse patterns
 - A pluggable `chart_pattern` feature module compatible with `xora_trade_ai`
 - Future vision / LLM pattern detection (Phase 2+)
 
@@ -13,38 +14,62 @@ It never executes trades. It only produces pattern features and explanations tha
 
 ---
 
+## Quick start (Docker — recommended)
+
+```bash
+git clone https://github.com/admin-xtinex/xora_chart_ai.git
+cd xora_chart_ai
+docker compose up --build
+```
+
+| Service  | URL |
+|----------|-----|
+| **Frontend** | http://localhost:3030 |
+| **Backend API** | http://localhost:8030 |
+| API docs | http://localhost:8030/docs |
+| Health | http://localhost:8030/api/v1/health |
+| Patterns | http://localhost:8030/api/v1/patterns |
+
+Port **8030** is used for the API (8000 is commonly taken by other XORA services).
+
+---
+
+## Local development (without Docker)
+
+### Backend
+
+```bash
+pip install -e .
+uvicorn xora_chart.main:app --host 0.0.0.0 --port 8030 --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:3030 (proxies /api → :8030)
+```
+
+---
+
 ## Phase 1 Status: **COMPLETE**
 
-See [`docs/PHASE1.md`](docs/PHASE1.md) for the full definition and completion checklist.
-
-### What Phase 1 delivers
+See [`docs/PHASE1.md`](docs/PHASE1.md).
 
 | Deliverable | Status |
 |-------------|--------|
 | Project scaffolding & identity | ✅ |
 | Complete pattern catalog (10 patterns) | ✅ |
 | Structured pattern data (JSON + Python) | ✅ |
-| FastAPI service (list / get patterns) | ✅ |
+| FastAPI backend on **port 8030** | ✅ |
+| React + Tailwind frontend | ✅ |
+| Docker + docker-compose (backend + frontend) | ✅ |
 | Module contract skeleton for `xora_trade_ai` | ✅ |
-| Documentation & architecture alignment | ✅ |
 
 ---
 
-## Quick start
-
-```bash
-git clone https://github.com/admin-xtinex/xora_chart_ai.git
-cd xora_chart_ai
-pip install -e .
-uvicorn src.xora_chart.main:app --reload
-```
-
-- API docs: http://localhost:8000/docs
-- Patterns: http://localhost:8000/api/v1/patterns
-
----
-
-## Pattern Library (Phase 1)
+## Pattern Library
 
 | Pattern | Direction | Type |
 |---------|-----------|------|
@@ -59,25 +84,24 @@ uvicorn src.xora_chart.main:app --reload
 | Bull Pennant | Bullish | Continuation |
 | Bear Pennant | Bearish | Continuation |
 
-All patterns include Overview, Characteristics, Trading Setup (Entry / SL / Target), Key Points, and volume behaviour — matching the reference images in `chart_reference/`.
+---
+
+## Architecture (Phase 1)
+
+```
+┌─────────────────┐     ┌──────────────────────┐
+│  React Frontend │────▶│  FastAPI Backend     │
+│  :3030 (nginx)  │     │  :8030               │
+└─────────────────┘     │  /api/v1/patterns    │
+                        │  /references/*       │
+                        └──────────────────────┘
+```
 
 ---
 
 ## Integration with xora_trade_ai
 
-This repo will later export a drop-in module:
-
-```
-xora.modules.chart_pattern
-```
-
-that implements the exact `Analyzer` protocol defined in `xora_trade_ai`:
-
-```python
-def analyze(self, snapshot: MarketSnapshot, config: ModuleConfig) -> FeatureResult
-```
-
-Phase 1 only provides the skeleton + catalog. Detection logic (geometric + vision) lands in Phase 2.
+This repo will later export a drop-in module `chart_pattern` that implements the `Analyzer` protocol. Phase 1 only provides the skeleton + catalog. Detection logic lands in Phase 2.
 
 ---
 
