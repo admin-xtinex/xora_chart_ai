@@ -5,12 +5,13 @@ from pydantic import BaseModel, Field
 
 from xora_chart.application.live import enrich_position, last_price
 from xora_chart.application.pipeline import run_cycle
+from xora_chart.application.reference_visual import library_status
 from xora_chart.application.symbol_scan import analyze_symbol
 from xora_chart.catalog import get_pattern, list_patterns
 from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
 from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
-from xora_chart.engines.trade.engine import open_from_opportunity, open_position
+from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
 from xora_chart.services.binance_ws import BinanceWSHub
 
@@ -23,13 +24,18 @@ def health() -> dict:
     latest = store.latest_cycle()
     settings = store.get_settings()
     hub = BinanceWSHub.instance()
+    refs = library_status()
+    degraded = hub.ticker_count() == 0 or not refs["ready"]
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
         "service": "xora-chart-ai",
         "phase": 3,
-        "engines": ["analysis", "decision", "trade"],
+        "engines": ["reference-visual", "analysis", "decision", "trade"],
         "binance": "websocket+seed",
         "ws_tickers": hub.ticker_count(),
+        "reference_gate": True,
+        "reference_images": refs["count"],
+        "reference_ready": refs["ready"],
         "auto_trade": settings.get("auto_trade", False),
         "trade_mode": settings.get("trade_mode", "demo"),
         "latest_cycle_id": latest.cycle_id if latest else None,
@@ -39,6 +45,11 @@ def health() -> dict:
         "positions_open": len([p for p in store.list_positions() if p.status == PositionStatus.OPEN]),
         "positions_closed_last_cycle": latest.positions_closed if latest else 0,
     }
+
+
+@router.get("/reference-library")
+def reference_library() -> dict:
+    return library_status()
 
 
 class SettingsPatch(BaseModel):
@@ -184,15 +195,9 @@ def open_trade(body: OpenFromOpportunityBody) -> Position:
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     try:
-        if opp.decision and opp.decision.setup and opp.decision.action.value in ("APPROVE", "WAIT"):
-            pos = open_position(
-                symbol=opp.symbol,
-                setup=opp.decision.setup,
-                opportunity_id=opp.id,
-                decision_reason=opp.decision.reason,
-            )
-        else:
-            pos = open_from_opportunity(opp)
+        # Single execution path: open_from_opportunity enforces APPROVE.
+        # WAIT/REJECT can never be manually forced into a position.
+        pos = open_from_opportunity(opp, store=store)
         opp.status = OpportunityStatus.TRADED
         store.update_opportunity(opp)
         return pos
