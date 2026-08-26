@@ -33,6 +33,15 @@ function fmt(n, d = 4) {
   return n.toFixed(Math.min(d, 6))
 }
 
+function Section({ title, children }) {
+  return (
+    <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">{title}</h3>
+      <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">{children}</div>
+    </section>
+  )
+}
+
 /* ═══════════════════ Opportunity Board ═══════════════════ */
 
 function OppCard({ opp, selected, onClick }) {
@@ -73,7 +82,7 @@ function OppDetail({ opp }) {
         <div className="text-center px-6">
           <div className="text-4xl mb-3 opacity-40">🎯</div>
           <p className="text-sm">Select an opportunity or run a scan</p>
-          <p className="text-xs text-slate-600 mt-2">Live 1m Binance candles + structure-based levels</p>
+          <p className="text-xs text-slate-600 mt-2">Live 1m Binance candles + explained structure</p>
         </div>
       </div>
     )
@@ -81,6 +90,7 @@ function OppDetail({ opp }) {
 
   const t = opp.trade || {}
   const m = opp.best_match || {}
+  const a = opp.analysis || {}
   const isBuy = t.side === 'BUY'
 
   return (
@@ -97,16 +107,23 @@ function OppDetail({ opp }) {
         </p>
       </div>
 
-      <div className="p-6 space-y-6">
-        {/* Live Binance 1m chart with entry / SL / TP */}
+      <div className="p-6 space-y-5">
+        {/* Summary explanation */}
+        {(a.summary || a.narrative) && (
+          <Section title="Analysis summary">
+            {a.summary || a.narrative}
+          </Section>
+        )}
+
+        {/* Live chart */}
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
             Live structure · {opp.interval || '1m'}
           </h3>
-          <CandleChart candles={opp.candles || []} trade={opp.trade} height={380} />
+          <CandleChart candles={opp.candles || []} trade={opp.trade} height={360} />
         </section>
 
-        {/* Trade levels */}
+        {/* Levels cards */}
         <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="rounded-lg bg-xora-800 border border-xora-600/50 p-3">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Entry</div>
@@ -134,42 +151,57 @@ function OppDetail({ opp }) {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="rounded-xl bg-xora-800/80 border border-xora-600/50 p-4">
-            <div className="text-xs text-slate-500 mb-2">Confidence</div>
-            <div className="flex items-end gap-2">
-              <span className="text-3xl font-bold text-amber-300">{t.confidence != null ? t.confidence.toFixed(0) : '—'}%</span>
-              <span className="text-xs text-slate-500 mb-1">pattern {m.similarity?.toFixed?.(0)}% match</span>
-            </div>
-          </div>
-          <div className="rounded-xl bg-xora-800/80 border border-xora-600/50 p-4">
-            <div className="text-xs text-slate-500 mb-2">AI / validation</div>
-            <p className="text-sm text-slate-300 leading-relaxed">{opp.ai_rationale || '—'}</p>
-          </div>
-        </section>
+        {/* Why + levels explanation */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {a.why_this_trade && (
+            <Section title="Why this trade">{a.why_this_trade}</Section>
+          )}
+          {a.levels_explanation && (
+            <Section title="How levels were set">{a.levels_explanation}</Section>
+          )}
+        </div>
 
-        {opp.all_matches?.length > 0 && (
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Pattern matches</h3>
-            <div className="space-y-2">
-              {opp.all_matches.map((pm) => (
-                <div key={pm.pattern_key} className="flex items-center justify-between rounded-lg bg-xora-800/60 border border-xora-600/40 px-3 py-2 text-sm">
-                  <span className="text-slate-200">{pm.pattern_name}</span>
-                  <span className="font-mono text-blue-300">{pm.similarity?.toFixed?.(1)}%</span>
-                </div>
-              ))}
-            </div>
+        {a.market_context && (
+          <Section title="Market context">{a.market_context}</Section>
+        )}
+
+        {/* Structure features explained */}
+        {a.structure_features?.length > 0 && (
+          <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Structure features</h3>
+            <ul className="space-y-2">
+              {a.structure_features.map((line, i) => {
+                const strong = line.includes('(strong)')
+                const weak = line.includes('(weak)')
+                return (
+                  <li key={i} className="flex items-start gap-2 text-sm">
+                    <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                      strong ? 'bg-emerald-400' : weak ? 'bg-rose-400' : 'bg-amber-400'
+                    }`} />
+                    <span className="text-slate-300">{line}</span>
+                  </li>
+                )
+              })}
+            </ul>
           </section>
         )}
 
-        {m.score_breakdown && Object.keys(m.score_breakdown).length > 0 && (
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Structure features</h3>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(m.score_breakdown).map(([k, v]) => (
-                <div key={k} className="rounded-md bg-xora-800 border border-xora-600/50 px-3 py-1.5 text-xs">
-                  <span className="text-slate-500">{k.replace(/_/g, ' ')}:</span>{' '}
-                  <span className="text-slate-200 font-mono">{typeof v === 'number' ? v.toFixed(2) : v}</span>
+        {/* Validation */}
+        {(a.validation || opp.ai_rationale) && (
+          <Section title="Validation">
+            {a.validation || opp.ai_rationale}
+          </Section>
+        )}
+
+        {/* Other matches */}
+        {opp.all_matches?.length > 1 && (
+          <section className="rounded-xl bg-xora-800/60 border border-xora-600/40 p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Other pattern matches</h3>
+            <div className="space-y-2">
+              {opp.all_matches.map((pm) => (
+                <div key={pm.pattern_key} className="flex items-center justify-between text-sm">
+                  <span className="text-slate-300">{pm.pattern_name}</span>
+                  <span className="font-mono text-blue-300">{pm.similarity?.toFixed?.(1)}%</span>
                 </div>
               ))}
             </div>
@@ -280,7 +312,7 @@ function OpportunityBoard() {
   )
 }
 
-/* ═══════════════════ Pattern Library (text only — no static images) ═══════════════════ */
+/* ═══════════════════ Pattern Library ═══════════════════ */
 
 function PatternCard({ pattern, selected, onClick }) {
   const isBull = pattern.direction === 'bullish'
