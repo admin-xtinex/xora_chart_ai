@@ -3,12 +3,14 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from xora_chart.application.live import enrich_position, last_price
 from xora_chart.application.pipeline import run_cycle
+from xora_chart.application.symbol_scan import analyze_symbol
 from xora_chart.catalog import get_pattern, list_patterns
 from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
 from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
-from xora_chart.engines.trade.engine import open_from_opportunity
+from xora_chart.engines.trade.engine import open_from_opportunity, open_position
 from xora_chart.persistence.store import Store
 from xora_chart.services.binance_ws import BinanceWSHub
 
@@ -83,6 +85,28 @@ def opportunity_detail(opp_id: str) -> Opportunity:
     return o
 
 
+class AnalyzeBody(BaseModel):
+    symbol: str
+
+
+@router.post("/analyze", response_model=Opportunity)
+async def analyze(body: AnalyzeBody) -> Opportunity:
+    try:
+        return await analyze_symbol(body.symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Analyze failed: {e}") from e
+
+
+@router.get("/quote/{symbol}")
+def quote(symbol: str) -> dict:
+    px = last_price(symbol)
+    if px is None:
+        raise HTTPException(status_code=404, detail=f"No live price for {symbol}")
+    return {"symbol": symbol.upper(), "price": px}
+
+
 @router.get("/cycles", response_model=list[CycleResult])
 def cycles(limit: int = Query(10, ge=1, le=50)) -> list[CycleResult]:
     return Store.instance().list_cycles(limit=limit)
@@ -107,46 +131,50 @@ class CloseBody(BaseModel):
     reason: str = "manual"
 
 
-@router.get("/positions", response_model=list[Position])
-def positions(status: str | None = Query(None, description="open | closed")) -> list[Position]:
-    return list_positions(status=status)
+@router.get("/positions")
+def positions(status: str | None = Query(None, description="open | closed")) -> list[dict]:
+    manage_open_positions()
+    items = list_positions(status=status)
+    return [enrich_position(p) for p in items]
 
 
 @router.get("/positions/history/summary")
 def positions_summary() -> dict:
-    all_pos = Store.instance().list_positions()
-    closed = [p for p in all_pos if p.status == PositionStatus.CLOSED]
-    open_p = [p for p in all_pos if p.status == PositionStatus.OPEN]
-    pnls = [p.realized_pnl for p in closed if p.realized_pnl is not None]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p < 0]
-    total_pnl = sum(pnls) if pnls else 0.0
+    all_pos = [enrich_position(p) for p in Store.instance().list_positions()]
+    closed = [p for p in all_pos if p.get("status") == "closed"]
+    open_p = [p for p in all_pos if p.get("status") == "open"]
+    realized = [p.get("realized_pnl") for p in closed if p.get("realized_pnl") is not None]
+    live = [p.get("live_pnl") for p in open_p if p.get("live_pnl") is not None]
+    wins = [p for p in realized if p > 0]
+    losses = [p for p in realized if p < 0]
+    total_pnl = sum(realized) if realized else 0.0
     return {
         "open_count": len(open_p),
         "closed_count": len(closed),
         "total_trades": len(all_pos),
         "wins": len(wins),
         "losses": len(losses),
-        "win_rate": round(len(wins) / len(pnls) * 100, 1) if pnls else 0.0,
+        "win_rate": round(len(wins) / len(realized) * 100, 1) if realized else 0.0,
         "total_realized_pnl": round(total_pnl, 4),
-        "avg_pnl": round(total_pnl / len(pnls), 4) if pnls else 0.0,
-        "best_trade": max(pnls) if pnls else None,
-        "worst_trade": min(pnls) if pnls else None,
+        "open_unrealized_pnl": round(sum(live), 4) if live else 0.0,
+        "avg_pnl": round(total_pnl / len(realized), 4) if realized else 0.0,
+        "best_trade": max(realized) if realized else None,
+        "worst_trade": min(realized) if realized else None,
     }
 
 
-@router.post("/positions/manage", response_model=list[Position])
-def manage_positions() -> list[Position]:
-    """Check open demo trades against live price and close SL/TP hits."""
-    return manage_open_positions()
+@router.post("/positions/manage")
+def manage_positions() -> list[dict]:
+    manage_open_positions()
+    return [enrich_position(p) for p in list_positions(status="open")]
 
 
-@router.get("/positions/{pos_id}", response_model=Position)
-def position_detail(pos_id: str) -> Position:
+@router.get("/positions/{pos_id}")
+def position_detail(pos_id: str) -> dict:
     p = Store.instance().get_position(pos_id)
     if not p:
         raise HTTPException(status_code=404, detail="Position not found")
-    return p
+    return enrich_position(p)
 
 
 @router.post("/positions", response_model=Position)
@@ -156,7 +184,15 @@ def open_trade(body: OpenFromOpportunityBody) -> Position:
     if not opp:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     try:
-        pos = open_from_opportunity(opp)
+        if opp.decision and opp.decision.setup and opp.decision.action.value in ("APPROVE", "WAIT"):
+            pos = open_position(
+                symbol=opp.symbol,
+                setup=opp.decision.setup,
+                opportunity_id=opp.id,
+                decision_reason=opp.decision.reason,
+            )
+        else:
+            pos = open_from_opportunity(opp)
         opp.status = OpportunityStatus.TRADED
         store.update_opportunity(opp)
         return pos
