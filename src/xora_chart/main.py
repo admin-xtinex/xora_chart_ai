@@ -5,8 +5,8 @@ from xora_chart.api.v1 import router as v1_router
 
 app = FastAPI(
     title="XORA Chart AI",
-    description="Live chart-pattern scanner for Binance Futures — Phase 2",
-    version="0.2.1",
+    description="Engine-based live scanner — Analysis · Decision · Trade (API-first for Web + Android)",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -24,11 +24,11 @@ app.include_router(v1_router)
 def root() -> dict:
     return {
         "service": "xora-chart-ai",
-        "phase": 2,
-        "status": "live-candles",
+        "phase": 3,
+        "engines": ["analysis", "decision", "trade"],
         "port": 8030,
         "docs": "/docs",
-        "patterns": "/api/v1/patterns",
         "opportunities": "/api/v1/opportunities",
+        "positions": "/api/v1/positions",
         "run_cycle": "POST /api/v1/cycles/run",
     }
