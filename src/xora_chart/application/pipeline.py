@@ -64,6 +64,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 cycle_id=result.cycle_id,
                 candle_count=len(window.candles),
                 last_price=window.candles[-1].close if window.candles else None,
+                candles=list(window.candles),
             )
             if accepted:
                 opportunities.append(opp)
