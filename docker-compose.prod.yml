@@ -1,0 +1,49 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xora_chart_api
+    environment:
+      PORT: "8030"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      XORA_TRADE_MODE: "${XORA_TRADE_MODE:-demo}"
+    expose:
+      - "8030"
+    restart: unless-stopped
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8030/api/v1/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: xora_chart_worker
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      XORA_API_BASE: "http://backend:8030"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/gcp/Dockerfile.frontend
+      args:
+        VITE_API_BASE: "/api"
+    container_name: xora_chart_ui
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 128m
