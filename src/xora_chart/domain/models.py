@@ -19,8 +19,6 @@ from xora_chart.domain.enums import (
 )
 
 
-# ── Catalog ──────────────────────────────────────────────────────────────────
-
 class TradingSetup(BaseModel):
     entry: str
     stop_loss: str
@@ -39,8 +37,6 @@ class Pattern(BaseModel):
     volume_behaviour: dict[str, str] = Field(default_factory=dict)
     extras: dict[str, Any] = Field(default_factory=dict)
 
-
-# ── Market data ──────────────────────────────────────────────────────────────
 
 class Candle(BaseModel):
     open_time: int
@@ -67,8 +63,6 @@ class DiscoveredCoin(BaseModel):
     quote_volume: float | None = None
 
 
-# ── Pattern matching ─────────────────────────────────────────────────────────
-
 class PatternMatch(BaseModel):
     pattern_key: str
     pattern_name: str
@@ -78,26 +72,22 @@ class PatternMatch(BaseModel):
     score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
-# ── Analysis Engine output ───────────────────────────────────────────────────
-
 class AnalysisSignal(BaseModel):
     name: str
-    score: float = 0.0  # 0–100
+    score: float = 0.0
     status: SignalStatus = SignalStatus.WEAK
     note: str = ""
 
 
 class MarketAnalysis(BaseModel):
     symbol: str
-    score: float = 0.0  # aggregate 0–100
+    score: float = 0.0
     bias: Direction = Direction.NEUTRAL
     regime: MarketRegime = MarketRegime.RANGING
     signals: list[AnalysisSignal] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-# ── Decision Engine output ───────────────────────────────────────────────────
 
 class TradeLevels(BaseModel):
     side: Side
@@ -127,8 +117,6 @@ class TradeDecision(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-# ── Trade Engine ─────────────────────────────────────────────────────────────
-
 class Position(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     symbol: str
@@ -149,13 +137,14 @@ class Position(BaseModel):
     opportunity_id: str | None = None
     decision_reason: str | None = None
 
+    last_price: float | None = None
+    exit_reason: str | None = None  # sl | tp1 | tp2 | tp3 | manual | expire
+
     opened_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: datetime | None = None
     exit_price: float | None = None
     realized_pnl: float | None = None
 
-
-# ── Opportunity (API + store aggregate) ──────────────────────────────────────
 
 class Opportunity(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
@@ -166,16 +155,13 @@ class Opportunity(BaseModel):
     best_match: PatternMatch | None = None
     all_matches: list[PatternMatch] = Field(default_factory=list)
 
-    # Engine outputs
     market_analysis: MarketAnalysis | None = None
     decision: TradeDecision | None = None
-
-    # Legacy/simple trade levels (mirrors decision.setup when approved)
     trade: TradeLevels | None = None
 
     ai_validated: bool = False
     ai_rationale: str | None = None
-    analysis: dict[str, Any] = Field(default_factory=dict)  # chart explainer + overlays
+    analysis: dict[str, Any] = Field(default_factory=dict)
 
     rank_score: float = 0.0
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -193,3 +179,4 @@ class CycleResult(BaseModel):
     symbols_scanned: list[str] = Field(default_factory=list)
     opportunities: list[Opportunity] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    positions_closed: int = 0
