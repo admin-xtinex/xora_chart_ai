@@ -35,7 +35,6 @@ async def discover_coins(
     quote_asset: str = "USDT",
     min_quote_volume: float = 500_000,
 ) -> list[DiscoveredCoin]:
-    """Build a ~20 coin universe from gainers, losers, volume, and trending."""
     tickers = await fetch_ticker_24h()
 
     usdt = [
@@ -54,8 +53,6 @@ async def discover_coins(
     gainers = sorted(usdt, key=pct, reverse=True)[:top_gainers]
     losers = sorted(usdt, key=pct)[:top_losers]
     volume = sorted(usdt, key=vol, reverse=True)[:top_volume]
-
-    # "Trending" ≈ high absolute % move with solid volume
     trending_sorted = sorted(usdt, key=lambda t: abs(pct(t)) * (vol(t) ** 0.5), reverse=True)[
         :trending
     ]
@@ -106,3 +103,17 @@ async def fetch_klines(symbol: str, interval: str = "1m", limit: int = 100) -> C
         for row in raw
     ]
     return CandleWindow(symbol=symbol, interval=interval, candles=candles)
+
+
+async def fetch_order_book(symbol: str, limit: int = 20) -> dict:
+    """Top-of-book depth for imbalance."""
+    return await _get("/fapi/v1/depth", params={"symbol": symbol, "limit": limit})
+
+
+async def fetch_premium_index(symbol: str) -> dict:
+    """Mark price + last funding rate."""
+    return await _get("/fapi/v1/premiumIndex", params={"symbol": symbol})
+
+
+async def fetch_open_interest(symbol: str) -> dict:
+    return await _get("/fapi/v1/openInterest", params={"symbol": symbol})
