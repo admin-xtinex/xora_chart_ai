@@ -49,4 +49,4 @@ jobs:
             -v "$PWD/frontend:/app" \
             -w /app \
             node:20-alpine \
-            sh -lc "npm ci && npm run build"
+            sh -lc 'if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi && npm run build'
