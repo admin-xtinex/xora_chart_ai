@@ -7,9 +7,8 @@ discovery:
   top_losers: 5
   top_volume: 5
   trending: 5
-  # total target ≈ 20 (duplicates collapsed)
   quote_asset: USDT
-  min_quote_volume: 500000   # filter dust
+  min_quote_volume: 500000
 
 market_data:
   interval: "1m"
@@ -17,8 +16,8 @@ market_data:
   venue: binance_futures
 
 matcher:
-  min_similarity: 60.0       # below this → drop
-  ai_threshold: 80.0         # only call AI above this
+  min_similarity: 55.0
+  ai_threshold: 70.0
   max_matches_per_symbol: 3
 
 trade:
@@ -26,15 +25,20 @@ trade:
   min_risk_reward: 1.5
 
 ranking:
-  top_n: 10
+  top_n: 15
   weights:
     similarity: 0.45
     confidence: 0.30
     risk_reward: 0.25
 
 ai:
-  enabled: false             # Phase 2 skeleton — enable in Phase 3
-  provider: "none"
+  # Set enabled: true and provide OPENAI_API_KEY (or XORA_AI_API_KEY) for LLM validation.
+  # Without a key, structured rule-based validation is used automatically.
+  enabled: true
+  provider: openai_compatible
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: set via env OPENAI_API_KEY preferred
 
 store:
   max_cycles_kept: 50
