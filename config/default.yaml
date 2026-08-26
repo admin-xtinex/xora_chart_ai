@@ -20,6 +20,8 @@ matcher:
   ai_threshold: 70.0
   max_matches_per_symbol: 3
 
+a nalysis: {}
+
 analysis:
   weights:
     volume: 0.30
@@ -30,6 +32,8 @@ analysis:
 
 decision:
   min_similarity: 55.0
+  min_reference_similarity: 55.0
+  expected_reference_images: 10
   min_analysis_score: 45.0
   require_all_required: true
   min_risk_reward: 1.5
@@ -38,7 +42,7 @@ decision:
 trade:
   mode: demo
   live_enabled: false
-  auto_trade: false          # when true, APPROVE → demo open automatically
+  auto_trade: false
   demo_equity: 10000
   risk_percent: 0.5
   default_leverage: 3
@@ -50,10 +54,11 @@ trade:
 ranking:
   top_n: 15
   weights:
-    similarity: 0.40
+    similarity: 0.35
     confidence: 0.25
     risk_reward: 0.15
-    analysis: 0.20
+    analysis: 0.15
+    reference: 0.10
 
 ai:
   enabled: true
