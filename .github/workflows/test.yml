@@ -27,6 +27,14 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 25
     steps:
+      - name: Repair workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d "$GITHUB_WORKSPACE" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE" || true
+          fi
+
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -36,17 +44,15 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm \
-            -v "$PWD:/app" \
-            -w /app \
+            -v "$PWD:/src:ro" \
             python:3.12-slim \
-            sh -lc "python -m pip install --no-cache-dir -e '.[dev]' && python -m compileall -q src && pytest -q"
+            sh -lc "cp -a /src /work && cd /work && python -m pip install --no-cache-dir -e '.[dev]' && python -m compileall -q src && pytest -q"
 
       - name: Frontend build
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm \
-            -v "$PWD/frontend:/app" \
-            -w /app \
+            -v "$PWD/frontend:/src:ro" \
             node:20-alpine \
-            sh -lc 'if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi && npm run build'
+            sh -lc 'cp -a /src /work && cd /work && if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi && npm run build'
