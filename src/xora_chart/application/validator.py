@@ -46,7 +46,6 @@ def _rule_based(window: CandleWindow, match: PatternMatch) -> tuple[bool, str]:
     if len(closes) < 20:
         return False, "Insufficient candles for validation"
 
-    # direction consistency with last 10 bars
     recent = closes[-10:]
     move = (recent[-1] - recent[0]) / recent[0] if recent[0] else 0
     bullish = match.direction.value == "bullish"
@@ -56,7 +55,6 @@ def _rule_based(window: CandleWindow, match: PatternMatch) -> tuple[bool, str]:
     if not bullish and move > 0.015:
         return False, f"Rejected: bearish pattern but recent move {move*100:.2f}% is against"
 
-    # require non-trivial structure score components if present
     bd = match.score_breakdown or {}
     weak = sum(1 for v in bd.values() if isinstance(v, (int, float)) and v < 0.15)
     if weak >= 3:
@@ -112,14 +110,17 @@ Reply ONLY with JSON:
 
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
-            r = await client.post(f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=body)
+            r = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=body,
+            )
             r.raise_for_status()
             content = r.json()["choices"][0]["message"]["content"]
     except Exception as e:
         log.warning("LLM call failed: %s — rule fallback", e)
         return _rule_based(window, match)
 
-    # parse JSON from response
     try:
         m = re.search(r"\{.*\}", content, re.DOTALL)
         data = json.loads(m.group(0) if m else content)
@@ -131,7 +132,11 @@ Reply ONLY with JSON:
         return accept, f"AI: {reason}"
     except Exception:
         lowered = content.lower()
-        accept = "accept": true" in lowered or '"accept":true' in lowered or "accept: true" in lowered
+        accept = (
+            '"accept": true' in lowered
+            or '"accept":true' in lowered
+            or "accept: true" in lowered
+        )
         return accept, f"AI (unparsed): {content[:240]}"
 
 
@@ -144,8 +149,6 @@ async def validate(
     threshold = float(matcher_cfg.get("ai_threshold", 70.0))
 
     if match.similarity < threshold:
-        # still allow mid-tier matches through trade generator path without AI label
-        # pipeline currently only keeps accepted — so soft-accept mid scores via rules
         if match.similarity >= float(matcher_cfg.get("min_similarity", 55.0)):
             ok, reason = _rule_based(window, match)
             return ok, f"Below AI threshold ({threshold}); {reason}"
