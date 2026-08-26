@@ -30,7 +30,7 @@ def _handle_signal(*_: object) -> None:
 
 async def trigger_cycle() -> dict:
     url = f"{API_BASE}/api/v1/cycles/run"
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=180.0) as client:
         r = await client.post(url)
         r.raise_for_status()
         return r.json()
@@ -47,21 +47,25 @@ async def _loop() -> None:
         return
 
     log.info("Worker started — API=%s interval=%ss", API_BASE, interval)
-
-    # small delay so API is fully up
-    await asyncio.sleep(5)
+    await asyncio.sleep(8)
 
     while not _shutdown.is_set():
         try:
             data = await trigger_cycle()
             opps = data.get("opportunities") or []
             scanned = data.get("symbols_scanned") or []
+            errors = data.get("errors") or []
+            closed = data.get("positions_closed") or 0
             log.info(
-                "Cycle %s — opportunities=%d scanned=%d",
+                "Cycle %s — opportunities=%d scanned=%d closed=%d errors=%d",
                 data.get("cycle_id"),
                 len(opps),
                 len(scanned),
+                closed,
+                len(errors),
             )
+            for err in errors[:5]:
+                log.warning("cycle error: %s", err)
         except Exception:
             log.exception("Cycle trigger failed")
 
