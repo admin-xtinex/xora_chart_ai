@@ -6,8 +6,20 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from xora_chart.domain.enums import Direction, OpportunityStatus, PatternType, Side
+from xora_chart.domain.enums import (
+    DecisionAction,
+    Direction,
+    MarketRegime,
+    OpportunityStatus,
+    PatternType,
+    PositionStatus,
+    Side,
+    SignalStatus,
+    TradeMode,
+)
 
+
+# ── Catalog ──────────────────────────────────────────────────────────────────
 
 class TradingSetup(BaseModel):
     entry: str
@@ -27,6 +39,8 @@ class Pattern(BaseModel):
     volume_behaviour: dict[str, str] = Field(default_factory=dict)
     extras: dict[str, Any] = Field(default_factory=dict)
 
+
+# ── Market data ──────────────────────────────────────────────────────────────
 
 class Candle(BaseModel):
     open_time: int
@@ -53,6 +67,8 @@ class DiscoveredCoin(BaseModel):
     quote_volume: float | None = None
 
 
+# ── Pattern matching ─────────────────────────────────────────────────────────
+
 class PatternMatch(BaseModel):
     pattern_key: str
     pattern_name: str
@@ -61,6 +77,27 @@ class PatternMatch(BaseModel):
     matched_example: str | None = None
     score_breakdown: dict[str, float] = Field(default_factory=dict)
 
+
+# ── Analysis Engine output ───────────────────────────────────────────────────
+
+class AnalysisSignal(BaseModel):
+    name: str
+    score: float = 0.0  # 0–100
+    status: SignalStatus = SignalStatus.WEAK
+    note: str = ""
+
+
+class MarketAnalysis(BaseModel):
+    symbol: str
+    score: float = 0.0  # aggregate 0–100
+    bias: Direction = Direction.NEUTRAL
+    regime: MarketRegime = MarketRegime.RANGING
+    signals: list[AnalysisSignal] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Decision Engine output ───────────────────────────────────────────────────
 
 class TradeLevels(BaseModel):
     side: Side
@@ -73,6 +110,53 @@ class TradeLevels(BaseModel):
     confidence: float
 
 
+class Confirmation(BaseModel):
+    name: str
+    required: bool = True
+    met: bool = False
+    note: str = ""
+
+
+class TradeDecision(BaseModel):
+    action: DecisionAction
+    reason: str = ""
+    setup: TradeLevels | None = None
+    confirmations: list[Confirmation] = Field(default_factory=list)
+    analysis_score: float = 0.0
+    pattern_similarity: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Trade Engine ─────────────────────────────────────────────────────────────
+
+class Position(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    symbol: str
+    side: Side
+    mode: TradeMode = TradeMode.DEMO
+    status: PositionStatus = PositionStatus.OPEN
+
+    entry: float
+    stop_loss: float
+    take_profit_1: float
+    take_profit_2: float | None = None
+    take_profit_3: float | None = None
+
+    quantity: float = 0.0
+    leverage: int = 1
+    margin_used: float = 0.0
+
+    opportunity_id: str | None = None
+    decision_reason: str | None = None
+
+    opened_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: datetime | None = None
+    exit_price: float | None = None
+    realized_pnl: float | None = None
+
+
+# ── Opportunity (API + store aggregate) ──────────────────────────────────────
+
 class Opportunity(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     symbol: str
@@ -82,13 +166,16 @@ class Opportunity(BaseModel):
     best_match: PatternMatch | None = None
     all_matches: list[PatternMatch] = Field(default_factory=list)
 
+    # Engine outputs
+    market_analysis: MarketAnalysis | None = None
+    decision: TradeDecision | None = None
+
+    # Legacy/simple trade levels (mirrors decision.setup when approved)
     trade: TradeLevels | None = None
 
     ai_validated: bool = False
     ai_rationale: str | None = None
-
-    # Plain-language analysis for the dashboard
-    analysis: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] = Field(default_factory=dict)  # chart explainer + overlays
 
     rank_score: float = 0.0
     created_at: datetime = Field(default_factory=datetime.utcnow)
