@@ -1,13 +1,15 @@
-"""Background worker that runs the scan pipeline on a fixed interval."""
+"""Background worker — triggers scan cycles on the API process so results share the same in-memory store."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 
-from xora_chart.application.pipeline import run_cycle
+import httpx
+
 from xora_chart.config import load_config
 
 logging.basicConfig(
@@ -18,13 +20,23 @@ log = logging.getLogger("xora_chart.worker")
 
 _shutdown = asyncio.Event()
 
+API_BASE = os.getenv("XORA_API_BASE", "http://backend:8030")
+
 
 def _handle_signal(*_: object) -> None:
     log.info("Shutdown signal received")
     _shutdown.set()
 
 
-async def main() -> None:
+async def trigger_cycle() -> dict:
+    url = f"{API_BASE}/api/v1/cycles/run"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url)
+        r.raise_for_status()
+        return r.json()
+
+
+async def _loop() -> None:
     cfg = load_config().get("cycle", {})
     interval = int(cfg.get("interval_seconds", 60))
     enabled = bool(cfg.get("enabled", True))
@@ -34,18 +46,24 @@ async def main() -> None:
         await _shutdown.wait()
         return
 
-    log.info("Worker started — interval=%ss", interval)
+    log.info("Worker started — API=%s interval=%ss", API_BASE, interval)
+
+    # small delay so API is fully up
+    await asyncio.sleep(5)
 
     while not _shutdown.is_set():
         try:
-            result = await run_cycle()
+            data = await trigger_cycle()
+            opps = data.get("opportunities") or []
+            scanned = data.get("symbols_scanned") or []
             log.info(
-                "Cycle complete: %d opportunities from %d symbols",
-                len(result.opportunities),
-                len(result.symbols_scanned),
+                "Cycle %s — opportunities=%d scanned=%d",
+                data.get("cycle_id"),
+                len(opps),
+                len(scanned),
             )
         except Exception:
-            log.exception("Cycle crashed")
+            log.exception("Cycle trigger failed")
 
         try:
             await asyncio.wait_for(_shutdown.wait(), timeout=interval)
@@ -55,10 +73,14 @@ async def main() -> None:
     log.info("Worker stopped")
 
 
-if __name__ == "__main__":
+def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
     try:
-        asyncio.run(main())
+        asyncio.run(_loop())
     except KeyboardInterrupt:
         sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
