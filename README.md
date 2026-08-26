@@ -1,66 +1,53 @@
 # XORA Chart AI
 
-**Live chart-pattern scanner** for Binance Futures.
+API-first live chart-pattern scanner for Binance Futures.
 
-The system continuously discovers active coins, matches them against a curated pattern library, ranks the best setups, and surfaces them on a dashboard. Users do not upload charts — the platform scans automatically.
-
----
-
-## Quick start
-
-```bash
-git clone https://github.com/admin-xtinex/xora_chart_ai.git
-cd xora_chart_ai
-docker compose up --build
-```
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3030 |
-| Backend API | http://localhost:8030 |
-| API docs | http://localhost:8030/docs |
-| Trigger scan | `POST http://localhost:8030/api/v1/cycles/run` |
-| Opportunities | http://localhost:8030/api/v1/opportunities |
+**Clients:** Web dashboard · future Android (same `/api/v1` JSON)
 
 ---
 
-## Pipeline
+## Engines
+
+| Engine | Role |
+|--------|------|
+| **Analysis** | Volume, order book, funding, OI, volatility, regime |
+| **Decision** | APPROVE / WAIT / REJECT + confirmations + entry/SL/TP |
+| **Trade** | Demo positions (default), sizing, leverage caps |
 
 ```
-Scheduler (1 min)
-  → Discovery (≈20 coins)
-  → 100 × 1m candles
-  → Pattern Matcher
-  → AI Validator (threshold-gated)
-  → Trade Generator (Entry / SL / TP / RR)
-  → Ranking
-  → API → Dashboard
+Pattern match → Analysis → Decision → Trade (optional) → API
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-## Local development
-
-**Backend**
+## Quick start
 
 ```bash
-pip install -e .
-uvicorn xora_chart.main:app --host 0.0.0.0 --port 8030 --reload
+docker compose up --build
 ```
 
-**Worker** (optional — or just `POST /api/v1/cycles/run`)
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3030 |
+| API | http://localhost:8030 |
+| Docs | http://localhost:8030/docs |
 
 ```bash
-XORA_API_BASE=http://localhost:8030 python -m xora_chart.worker
+# Scan
+curl -X POST http://localhost:8030/api/v1/cycles/run
+
+# Opportunities (includes market_analysis + decision)
+curl http://localhost:8030/api/v1/opportunities
+
+# Open demo trade from approved opportunity
+curl -X POST http://localhost:8030/api/v1/positions \
+  -H 'Content-Type: application/json' \
+  -d '{"opportunity_id":"<id>"}'
 ```
 
-**Frontend**
-
-```bash
-cd frontend && npm install && npm run dev
-```
+Trade mode: `XORA_TRADE_MODE=demo` (default). Live is disabled until explicitly enabled.
 
 ---
 
@@ -68,21 +55,7 @@ cd frontend && npm install && npm run dev
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| 1 | Educational catalog + React UI + Docker | ✅ Complete |
-| 2 | Full pipeline structure, discovery, matcher skeleton, worker, opportunity API | ✅ Structure complete |
-| 3 | Real similarity + AI validator + Opportunity Board UI | Pending |
-| 4 | Persistence, learning loop, production hardening | Pending |
-
----
-
-## Pattern library (seed)
-
-Breakout/Retest, Breakdown/Retest, Head & Shoulders, Double Top/Bottom, Cup & Handle, Bull/Bear Flag, Bull/Bear Pennant.
-
-Reference image folders live under `patterns/` (see `patterns/README.md`).
-
----
-
-## License
-
-Private — XORA / Xtinex
+| 1 | Catalog + UI | ✅ |
+| 2 | Scanner + charts + overlays | ✅ |
+| 3 | Analysis · Decision · Trade engines | ✅ Foundation |
+| 4 | Persist store, multi-TF, live adapter, Android | Planned |
