@@ -63,6 +63,11 @@ export async function fetchTradeSummary() {
   return json(res, 'summary')
 }
 
+export async function managePositions() {
+  const res = await fetch(`${API_BASE}/api/v1/positions/manage`, { method: 'POST' })
+  return json(res, 'manage')
+}
+
 export async function openDemoTrade(opportunityId) {
   const res = await fetch(`${API_BASE}/api/v1/positions`, {
     method: 'POST',
@@ -76,7 +81,7 @@ export async function closeTrade(posId, exitPrice) {
   const res = await fetch(`${API_BASE}/api/v1/positions/${posId}/close`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(exitPrice != null ? { exit_price: exitPrice } : {}),
+    body: JSON.stringify(exitPrice != null ? { exit_price: exitPrice, reason: 'manual' } : { reason: 'manual' }),
   })
   return json(res, 'close trade')
 }
