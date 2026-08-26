@@ -87,13 +87,15 @@ class Opportunity(BaseModel):
     ai_validated: bool = False
     ai_rationale: str | None = None
 
+    # Plain-language analysis for the dashboard
+    analysis: dict[str, Any] = Field(default_factory=dict)
+
     rank_score: float = 0.0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     cycle_id: str | None = None
 
     candle_count: int = 0
     last_price: float | None = None
-    # Live Binance OHLCV used for matching — rendered on the Opportunity Board
     candles: list[Candle] = Field(default_factory=list)
 
 
