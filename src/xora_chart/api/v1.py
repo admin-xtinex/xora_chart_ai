@@ -1,11 +1,16 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+"""Versioned REST API — shared by Web dashboard and future Android app."""
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from xora_chart.application.pipeline import run_cycle
 from xora_chart.catalog import get_pattern, list_patterns
-from xora_chart.domain.models import CycleResult, Opportunity, Pattern
+from xora_chart.domain.models import CycleResult, Opportunity, Pattern, Position
+from xora_chart.engines.trade import close_position, list_positions, open_position
+from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
 
-router = APIRouter(prefix="/api/v1", tags=["patterns"])
+router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 
 @router.get("/health")
@@ -15,18 +20,20 @@ def health() -> dict:
     return {
         "status": "ok",
         "service": "xora-chart-ai",
-        "phase": 2,
+        "phase": 3,
+        "engines": ["analysis", "decision", "trade"],
         "latest_cycle_id": latest.cycle_id if latest else None,
         "opportunities_cached": len(store.list_opportunities()),
+        "positions_open": len([p for p in store.list_positions() if p.status.value == "open"]),
     }
 
 
-# ── Educational pattern catalog (Phase 1) ────────────────────────────────────
+# ── Patterns ─────────────────────────────────────────────────────────────────
 
 @router.get("/patterns", response_model=list[Pattern])
 def patterns(
-    direction: str | None = Query(None, description="bullish | bearish"),
-    type: str | None = Query(None, alias="type", description="continuation | reversal"),
+    direction: str | None = Query(None),
+    type: str | None = Query(None, alias="type"),
 ) -> list[Pattern]:
     return list_patterns(direction=direction, pattern_type=type)
 
@@ -39,7 +46,7 @@ def pattern_detail(key: str) -> Pattern:
     return p
 
 
-# ── Live opportunities (Phase 2 pipeline) ────────────────────────────────────
+# ── Opportunities ────────────────────────────────────────────────────────────
 
 @router.get("/opportunities", response_model=list[Opportunity])
 def opportunities(limit: int = Query(20, ge=1, le=100)) -> list[Opportunity]:
@@ -54,6 +61,8 @@ def opportunity_detail(opp_id: str) -> Opportunity:
     return o
 
 
+# ── Cycles ───────────────────────────────────────────────────────────────────
+
 @router.get("/cycles", response_model=list[CycleResult])
 def cycles(limit: int = Query(10, ge=1, le=50)) -> list[CycleResult]:
     return Store.instance().list_cycles(limit=limit)
@@ -65,6 +74,48 @@ def latest_cycle() -> CycleResult | None:
 
 
 @router.post("/cycles/run", response_model=CycleResult)
-async def trigger_cycle(background: BackgroundTasks) -> CycleResult:
-    """Run one full scan cycle immediately (also used by the worker)."""
+async def trigger_cycle() -> CycleResult:
     return await run_cycle()
+
+
+# ── Positions (Trade Engine) ─────────────────────────────────────────────────
+
+class OpenFromOpportunityBody(BaseModel):
+    opportunity_id: str
+
+
+class CloseBody(BaseModel):
+    exit_price: float | None = Field(None, description="Optional mark price; defaults to entry")
+
+
+@router.get("/positions", response_model=list[Position])
+def positions(status: str | None = Query(None, description="open | closed")) -> list[Position]:
+    return list_positions(status=status)
+
+
+@router.get("/positions/{pos_id}", response_model=Position)
+def position_detail(pos_id: str) -> Position:
+    p = Store.instance().get_position(pos_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return p
+
+
+@router.post("/positions", response_model=Position)
+def open_trade(body: OpenFromOpportunityBody) -> Position:
+    """Open demo/live position from an APPROVE opportunity."""
+    opp = Store.instance().get_opportunity(body.opportunity_id)
+    if not opp:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    try:
+        return open_from_opportunity(opp)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/positions/{pos_id}/close", response_model=Position)
+def close_trade(pos_id: str, body: CloseBody | None = None) -> Position:
+    try:
+        return close_position(pos_id, exit_price=body.exit_price if body else None)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
