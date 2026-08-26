@@ -1,60 +1,64 @@
-# XORA Chart AI — Phase 2 (Pipeline Foundation)
+# XORA Chart AI — Phase 2
 
-**Status:** Structure complete — runnable end-to-end cycle  
+**Status:** Pipeline + Opportunity Board + geometric matcher + AI validation  
 **Date:** 2026-08-26
 
 ---
 
-## What Phase 2 delivers
+## Delivered
 
 | Component | Status |
 |-----------|--------|
-| Full folder / service architecture | ✅ |
-| Config (`config/default.yaml`, `patterns.yaml`) | ✅ |
-| Domain models (Candle, Opportunity, TradeLevels, …) | ✅ |
-| Discovery (Binance Futures gainers/losers/volume/trending) | ✅ |
-| Market data (100 × 1m klines) | ✅ |
-| Pattern matcher (heuristic skeleton) | ✅ |
-| AI validator (placeholder, threshold-gated) | ✅ |
-| Trade generator (entry / SL / TP1-3 / RR) | ✅ |
-| Ranking engine | ✅ |
-| In-memory store + cycle history | ✅ |
-| Worker scheduler (calls API every 60s) | ✅ |
-| API: `/opportunities`, `/cycles`, `POST /cycles/run` | ✅ |
+| Discovery + market data + ranking + worker | ✅ |
+| **Geometric similarity engine** (per-pattern detectors) | ✅ |
+| **AI validation** (LLM if key present, else rule-based) | ✅ |
+| **Opportunity Board** (React) | ✅ |
+| Pattern Library tab retained | ✅ |
 | Docker: backend + worker + frontend | ✅ |
-| Pattern repository folders | ✅ |
 
 ---
 
-## How to run a cycle
+## Similarity engine
+
+Dedicated detectors for:
+
+- Bull / Bear Flag  
+- Bull / Bear Pennant  
+- Double Top / Bottom  
+- Head & Shoulders  
+- Breakout + Retest / Breakdown + Retest  
+- Cup & Handle  
+
+Each returns a 0–100 score plus feature breakdown (impulse, converge, retest, etc.).
+
+---
+
+## AI validation
+
+1. Similarity ≥ `matcher.ai_threshold` (default 70)  
+2. If `ai.enabled` and `OPENAI_API_KEY` (or `XORA_AI_API_KEY`) → OpenAI-compatible chat completion  
+3. Else → structured rule-based checks (direction alignment, feature quality)  
+
+---
+
+## Frontend
+
+- **Opportunities** tab — ranked live setups, Run scan, detail (levels, AI reason, matches, reference image)  
+- **Pattern Library** tab — educational catalog  
+
+---
+
+## Run
 
 ```bash
-# Full stack
 docker compose up --build
-
-# Or manually trigger one scan
-curl -X POST http://localhost:8030/api/v1/cycles/run
-
-# List ranked opportunities
-curl http://localhost:8030/api/v1/opportunities
+# UI http://localhost:3030
+# Scan: button in UI or POST /api/v1/cycles/run
 ```
 
----
+Optional LLM:
 
-## Known Phase 2 limitations (intentional)
-
-1. **Matcher is heuristic**, not vision/embedding similarity yet.
-2. **AI validator is off** by default (`ai.enabled: false`).
-3. **Store is in-memory** (resets on API restart). Redis/Postgres in Phase 3/4.
-4. **Frontend** still shows the educational catalog; Opportunity Board UI is next.
-5. **Reference image matching** not wired — `patterns/` folders are ready for examples.
-
----
-
-## Next (Phase 2b / 3)
-
-1. Opportunity Board on the React frontend
-2. Real similarity engine (shape features or embeddings)
-3. Enable AI validator for matches ≥ 80%
-4. Persist cycles/opportunities
-5. Grow `patterns/*/exampleN.png` library
+```bash
+export OPENAI_API_KEY=sk-...
+# rebuild / restart backend
+```
