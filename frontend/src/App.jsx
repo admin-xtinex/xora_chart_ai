@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   API_BASE,
   fetchHealth,
   fetchOpportunities,
   fetchPatterns,
-  referenceImageUrl,
   runCycle,
 } from './api'
+import CandleChart from './CandleChart'
 
 function Badge({ children, tone = 'neutral' }) {
   const tones = {
@@ -73,7 +73,7 @@ function OppDetail({ opp }) {
         <div className="text-center px-6">
           <div className="text-4xl mb-3 opacity-40">🎯</div>
           <p className="text-sm">Select an opportunity or run a scan</p>
-          <p className="text-xs text-slate-600 mt-2">Live matches from Binance Futures appear here</p>
+          <p className="text-xs text-slate-600 mt-2">Live 1m Binance candles + structure-based levels</p>
         </div>
       </div>
     )
@@ -82,7 +82,6 @@ function OppDetail({ opp }) {
   const t = opp.trade || {}
   const m = opp.best_match || {}
   const isBuy = t.side === 'BUY'
-  const img = referenceImageUrl(m.pattern_key)
 
   return (
     <div className="h-full overflow-y-auto">
@@ -99,11 +98,19 @@ function OppDetail({ opp }) {
       </div>
 
       <div className="p-6 space-y-6">
+        {/* Live Binance 1m chart with entry / SL / TP */}
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+            Live structure · {opp.interval || '1m'}
+          </h3>
+          <CandleChart candles={opp.candles || []} trade={opp.trade} height={380} />
+        </section>
+
         {/* Trade levels */}
         <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="rounded-lg bg-xora-800 border border-xora-600/50 p-3">
             <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Entry</div>
-            <div className="text-sm font-mono font-medium text-slate-100">{fmt(t.entry)}</div>
+            <div className="text-sm font-mono font-medium text-blue-300">{fmt(t.entry)}</div>
           </div>
           <div className="rounded-lg bg-rose-500/10 border border-rose-500/20 p-3">
             <div className="text-[10px] uppercase tracking-wider text-rose-400/80 mb-1">Stop Loss</div>
@@ -127,7 +134,6 @@ function OppDetail({ opp }) {
           </div>
         </section>
 
-        {/* Confidence + AI */}
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="rounded-xl bg-xora-800/80 border border-xora-600/50 p-4">
             <div className="text-xs text-slate-500 mb-2">Confidence</div>
@@ -142,7 +148,6 @@ function OppDetail({ opp }) {
           </div>
         </section>
 
-        {/* All matches */}
         {opp.all_matches?.length > 0 && (
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Pattern matches</h3>
@@ -157,10 +162,9 @@ function OppDetail({ opp }) {
           </section>
         )}
 
-        {/* Score breakdown */}
         {m.score_breakdown && Object.keys(m.score_breakdown).length > 0 && (
           <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Similarity features</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Structure features</h3>
             <div className="flex flex-wrap gap-2">
               {Object.entries(m.score_breakdown).map(([k, v]) => (
                 <div key={k} className="rounded-md bg-xora-800 border border-xora-600/50 px-3 py-1.5 text-xs">
@@ -168,16 +172,6 @@ function OppDetail({ opp }) {
                   <span className="text-slate-200 font-mono">{typeof v === 'number' ? v.toFixed(2) : v}</span>
                 </div>
               ))}
-            </div>
-          </section>
-        )}
-
-        {/* Reference pattern image */}
-        {img && (
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Reference pattern</h3>
-            <div className="rounded-xl overflow-hidden border border-xora-600/50 bg-xora-950">
-              <img src={img} alt={m.pattern_name} className="w-full h-auto object-contain max-h-[380px]" loading="lazy" />
             </div>
           </section>
         )}
@@ -286,7 +280,7 @@ function OpportunityBoard() {
   )
 }
 
-/* ═══════════════════ Pattern Library (Phase 1) ═══════════════════ */
+/* ═══════════════════ Pattern Library (text only — no static images) ═══════════════════ */
 
 function PatternCard({ pattern, selected, onClick }) {
   const isBull = pattern.direction === 'bullish'
@@ -315,7 +309,6 @@ function PatternDetail({ pattern }) {
       </div>
     )
   }
-  const img = referenceImageUrl(pattern.key)
   const isBull = pattern.direction === 'bullish'
   return (
     <div className="h-full overflow-y-auto">
@@ -327,11 +320,6 @@ function PatternDetail({ pattern }) {
         </div>
       </div>
       <div className="p-6 space-y-6">
-        {img && (
-          <div className="rounded-xl overflow-hidden border border-xora-600/50 bg-xora-950">
-            <img src={img} alt={pattern.name} className="w-full h-auto object-contain max-h-[420px]" loading="lazy" />
-          </div>
-        )}
         <p className="text-sm text-slate-300 leading-relaxed">{pattern.overview}</p>
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3">
@@ -346,6 +334,16 @@ function PatternDetail({ pattern }) {
             <div className="text-[10px] uppercase text-sky-400/80 mb-1">Target</div>
             <div className="text-sm text-sky-300">{pattern.trading_setup.target}</div>
           </div>
+        </section>
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Characteristics</h3>
+          <ul className="space-y-1.5">
+            {pattern.characteristics?.map((c, i) => (
+              <li key={i} className="flex gap-2 text-sm text-slate-300">
+                <span className="text-blue-400">•</span>{c}
+              </li>
+            ))}
+          </ul>
         </section>
         <ul className="space-y-1.5">
           {pattern.key_points.map((k, i) => (
@@ -411,8 +409,6 @@ function PatternLibrary() {
   )
 }
 
-/* ═══════════════════ Shell ═══════════════════ */
-
 export default function App() {
   const [tab, setTab] = useState('opportunities')
   const [health, setHealth] = useState(null)
@@ -435,7 +431,7 @@ export default function App() {
             </div>
             <div>
               <div className="font-semibold text-sm tracking-tight">XORA Chart AI</div>
-              <div className="text-[11px] text-slate-500">Live scanner · Phase 2</div>
+              <div className="text-[11px] text-slate-500">Live 1m structure scanner</div>
             </div>
           </div>
 
