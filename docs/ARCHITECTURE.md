@@ -1,131 +1,116 @@
-# XORA Chart AI — Target Architecture
+# XORA Chart AI — Architecture
 
-**Status:** Pipeline structure expanded (Phase 2 foundation)  
-**Date:** 2026-08-26
-
----
-
-## Core Concept
-
-The system continuously scans **Binance Futures**, identifies the best opportunities, compares them against a curated library of known winning chart patterns, and presents only the highest-probability trades.
-
-- User does **not** upload charts.
-- System scans automatically every cycle.
+**Version:** 0.3 · Engine layer  
+**Clients:** Web dashboard (now) · Android / any mobile (same REST API)
 
 ---
 
-## Overall Flow
+## Design goals
+
+1. **API-first** — all features exposed via stable `/api/v1/*` JSON. Web and Android share contracts.
+2. **Engine separation** — Analysis ≠ Decision ≠ Trade. No engine owns another’s job.
+3. **Pluggable execution** — Trade Engine demo today, live adapter later, same interface.
+4. **Scan pipeline is orchestration only** — business logic lives in engines/domain.
+5. **Forward-compatible** — auth, push notifications, multi-account can slot in without rewrite.
+
+---
+
+## High-level flow
 
 ```
-Scheduler (every 1 minute)
+Scheduler / POST /cycles/run
         │
         ▼
-Discovery Service          → 20 coins (gainers / losers / volume / trending)
+Discovery → Market Data → Pattern Matcher
         │
         ▼
-Market Data Service        → 100 × 1m candles per coin
-        │
-        ▼
-Normalize Candles
-        │
-        ▼
-Pattern Matcher            → similarity vs Pattern Repository
-        │
-        ▼
-Rank Matches
-        │
-        ▼
-AI Validator               → only if similarity ≥ threshold (e.g. 80%)
-        │
-        ▼
-Trade Generator            → Entry / SL / TP1-3 / RR / confidence
-        │
-        ▼
-Ranking Engine             → top opportunities only
-        │
-        ▼
-Store Results
-        │
-        ▼
-API  →  Web Dashboard (Opportunity Board)
+┌───────────────────┐
+│  Analysis Engine  │  volume, OI, funding, book, volatility, regime
+└─────────┬─────────┘
+          ▼
+┌───────────────────┐
+│  Decision Engine  │  WAIT / APPROVE / REJECT · confirmations · levels
+└─────────┬─────────┘
+          ▼
+┌───────────────────┐
+│   Trade Engine    │  demo (default) | live · size · leverage · orders
+└─────────┬─────────┘
+          ▼
+Store → REST API → Web / Android
 ```
 
 ---
 
-## Services
-
-| Service | Responsibility |
-|---------|----------------|
-| **Scheduler / Worker** | Runs the full cycle on a fixed interval |
-| **Discovery** | Top gainers (5) + losers (5) + volume movers (5) + trending (5) → 20 symbols |
-| **Market Data** | Fetch OHLCV from Binance Futures |
-| **Pattern Repository** | Curated reference patterns + example charts |
-| **Similarity Engine** | Deterministic match scores (not LLM-first) |
-| **AI Validator** | Confirm / reject high-similarity candidates |
-| **Trade Generator** | Entry, SL, targets, RR, confidence |
-| **Ranking Engine** | Order opportunities by quality |
-| **API** | Read models for dashboard |
-| **Frontend** | Opportunity board + detail view |
-
----
-
-## Why this order
-
-- **Lower AI cost** — AI only runs on strong matches
-- **Consistency** — same chart → same reference matches
-- **Explainability** — every setup points to a concrete reference example
-- **Scalability** — add strategies by adding reference patterns, not rewriting prompts
-- **Continuous** — platform surfaces opportunities; user does not upload
-
----
-
-## Folder layout (target)
+## Package layout
 
 ```
-xora_chart_ai/
-  config/
-    default.yaml
-    patterns.yaml
-  data/
-    patterns.json              # educational catalog (Phase 1)
-  patterns/                    # reference image repository
-    bull_flag/
-    bear_flag/
-    ...
-  chart_reference/             # original educational cards (kept)
-  src/xora_chart/
-    main.py                    # FastAPI process
-    worker.py                  # scheduler / cycle runner
-    domain/
-      models.py
-      enums.py
-    application/
-      pipeline.py              # orchestrates one full cycle
-      discovery.py
-      market_data.py
-      matcher.py
-      validator.py
-      trade_generator.py
-      ranking.py
-    services/
-      binance.py
-    persistence/
-      store.py
-    api/
-      v1.py
-    catalog.py                 # Phase 1 catalog loader
-    modules/
-  frontend/
-  docs/
+src/xora_chart/
+  domain/           # pure models + enums (API contract source of truth)
+  engines/
+    analysis/       # Analysis Engine
+    decision/       # Decision Engine
+    trade/          # Trade Engine (demo + live interface)
+  application/      # pipeline orchestration, discovery, matcher, explainer
+  services/         # Binance & external I/O
+  persistence/      # Store abstraction (memory now → Redis/Postgres later)
+  api/v1.py         # versioned REST — mobile-safe
 ```
 
 ---
 
-## Phase map
+## Engines
 
-| Phase | Scope |
-|-------|--------|
-| **1** | Educational catalog + React UI + Docker (done) |
-| **2** | Pipeline structure, Discovery, Market Data, Matcher skeleton, Opportunity API, Worker |
-| **3** | Real similarity engine + AI Validator + Trade Generator quality |
-| **4** | Pattern Repository management, learning loop, production hardening |
+### Analysis Engine
+- **In:** CandleWindow, PatternMatch
+- **Out:** `MarketAnalysis` (scores, signals, regime, bias)
+- **Does not:** place trades or set entry/SL
+
+### Decision Engine
+- **In:** CandleWindow, PatternMatch, MarketAnalysis
+- **Out:** `TradeDecision` (APPROVE | WAIT | REJECT, setup, confirmations)
+- **Owns:** confirmation rules, structure-based levels, min RR
+
+### Trade Engine
+- **In:** approved TradeDecision / TradeSetup
+- **Out:** `Position` / order results
+- **Modes:** `demo` (default) | `live`
+- **Owns:** sizing, leverage caps, margin checks, fill simulation
+
+---
+
+## API surface (shared by Web + Android)
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| GET | `/api/v1/health` | Liveness + cache stats |
+| GET | `/api/v1/opportunities` | Ranked opportunities |
+| GET | `/api/v1/opportunities/{id}` | Full detail + analysis + decision |
+| POST | `/api/v1/cycles/run` | Trigger scan |
+| GET | `/api/v1/positions` | Open positions (demo/live) |
+| POST | `/api/v1/positions` | Execute approved setup (demo/live) |
+| POST | `/api/v1/positions/{id}/close` | Close position |
+| GET | `/api/v1/patterns` | Educational catalog |
+
+All responses are plain JSON, no HTML. Auth (JWT/API key) can wrap the same routes later.
+
+---
+
+## Future upgrades (planned slots)
+
+| Feature | How it fits |
+|---------|-------------|
+| Android app | Consume `/api/v1` only; push via FCM using opportunity events |
+| Auth / multi-user | Middleware + user-scoped store |
+| Redis / Postgres | Swap `persistence.Store` implementation |
+| Live trading | `TradeEngine` live adapter + secrets |
+| Multi-TF | Analysis Engine signal + Decision filter |
+| Alerts | Event bus after Decision APPROVE |
+| Outcome learning | Persist decision→fill→PnL; pattern stats job |
+
+---
+
+## Config
+
+`config/default.yaml` sections: `cycle`, `discovery`, `market_data`, `matcher`, `analysis`, `decision`, `trade`, `ranking`, `ai`, `store`.
+
+Trade mode: `trade.mode: demo | live` (env `XORA_TRADE_MODE` overrides).
