@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== Backend recent WebSocket logs ==="
-          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker|kline|depth|mark' | tail -n 180 || true
+          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker|kline|depth|mark|aggTrade|bookTicker' | tail -n 180 || true
 
           echo "=== Current VM WebSocket controls ==="
           docker run --rm python:3.12-slim sh -lc '
@@ -69,10 +69,14 @@ jobs:
 
           PROBES = {
               "futures_ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "futures_mini_ticker": "wss://fstream.binance.com/ws/btcusdt@miniTicker",
               "futures_kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
               "futures_mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
               "futures_depth": "wss://fstream.binance.com/ws/btcusdt@depth20@100ms",
-              "futures_combined": "wss://fstream.binance.com/stream?streams=btcusdt@ticker/btcusdt@kline_1m/btcusdt@depth20@100ms/btcusdt@markPrice@1s",
+              "futures_agg_trade": "wss://fstream.binance.com/ws/btcusdt@aggTrade",
+              "futures_book_ticker": "wss://fstream.binance.com/ws/btcusdt@bookTicker",
+              "futures_all_book_ticker": "wss://fstream.binance.com/ws/!bookTicker",
+              "futures_combined_alt": "wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@depth20@100ms",
               "spot_ticker_443": "wss://stream.binance.com:443/ws/btcusdt@ticker",
               "spot_ticker_9443": "wss://stream.binance.com:9443/ws/btcusdt@ticker",
           }
@@ -99,7 +103,7 @@ jobs:
                   return False
 
           async def subscribe_probe():
-              name = "futures_subscribe_rpc"
+              name = "futures_subscribe_rpc_alt"
               try:
                   async with websockets.connect(
                       "wss://fstream.binance.com/ws",
@@ -110,29 +114,33 @@ jobs:
                       await ws.send(json.dumps({
                           "method": "SUBSCRIBE",
                           "params": [
+                              "btcusdt@aggTrade",
+                              "btcusdt@bookTicker",
+                              "btcusdt@depth20@100ms",
                               "btcusdt@ticker",
                               "btcusdt@kline_1m",
-                              "btcusdt@depth20@100ms",
                               "btcusdt@markPrice@1s",
                           ],
                           "id": 1,
                       }))
-                      for _ in range(4):
+                      deadline = asyncio.get_running_loop().time() + 12
+                      seen = set()
+                      while asyncio.get_running_loop().time() < deadline and len(seen) < 3:
                           raw = await asyncio.wait_for(ws.recv(), timeout=12)
                           data = json.loads(raw)
                           if isinstance(data, dict) and data.get("id") == 1:
                               print("WS_CONTROL_ACK", name, data)
                               continue
-                          print("WS_CONTROL_OK", name, "event=", data.get("e"), "bytes=", len(raw))
-                          return True
-                      return False
+                          event = data.get("e") if isinstance(data, dict) else None
+                          seen.add(event or "bookTicker")
+                          print("WS_CONTROL_OK", name, "event=", event, "bytes=", len(raw))
+                      return bool(seen)
               except Exception as exc:
                   print("WS_CONTROL_ERROR", name, type(exc).__name__, repr(exc))
                   return False
 
           async def main():
-              for name, url in PROBES.items():
-                  await probe(name, url)
+              await asyncio.gather(*(probe(name, url) for name, url in PROBES.items()))
               await subscribe_probe()
 
           asyncio.run(main())
