@@ -24,6 +24,7 @@ jobs:
 
     steps:
       - name: Deploy directly on production VM
+        if: ${{ !startsWith(github.event.head_commit.message, 'diag:') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +64,15 @@ jobs:
           import json
           import websockets
 
+          REQUESTS = [
+              ("price-all", "ticker.price", {}),
+              ("book-all", "ticker.book", {}),
+              ("depth-btc", "depth", {"symbol": "BTCUSDT", "limit": 20}),
+              ("klines-btc", "klines", {"symbol": "BTCUSDT", "interval": "1m", "limit": 100}),
+              ("ticker24-btc", "ticker.24hr", {"symbol": "BTCUSDT"}),
+              ("trades-btc", "trades.recent", {"symbol": "BTCUSDT", "limit": 20}),
+          ]
+
           async def request(ws, req_id, method, params):
               await ws.send(json.dumps({"id": req_id, "method": method, "params": params}))
               raw = await asyncio.wait_for(ws.recv(), timeout=12)
@@ -72,16 +82,18 @@ jobs:
                   summary = f"list[{len(result)}] first={result[0] if result else None}"
               else:
                   summary = repr(result)
-              print("WS_API", method, "status=", data.get("status"), "result=", summary[:500], "error=", data.get("error"))
+              print("WS_API", method, "status=", data.get("status"), "result=", summary[:700], "error=", data.get("error"))
 
           async def main():
               url = "wss://ws-fapi.binance.com/ws-fapi/v1"
               try:
                   async with websockets.connect(url, open_timeout=10, close_timeout=3, ping_interval=None) as ws:
                       print("WS_API_CONNECTED", url)
-                      await request(ws, "price-all", "ticker.price", {})
-                      await request(ws, "book-all", "ticker.book", {})
-                      await request(ws, "depth-btc", "depth", {"symbol": "BTCUSDT", "limit": 20})
+                      for req_id, method, params in REQUESTS:
+                          try:
+                              await request(ws, req_id, method, params)
+                          except Exception as exc:
+                              print("WS_API_REQUEST_ERROR", method, type(exc).__name__, repr(exc))
               except Exception as exc:
                   print("WS_API_ERROR", type(exc).__name__, repr(exc))
 
