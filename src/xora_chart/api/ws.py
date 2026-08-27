@@ -42,19 +42,23 @@ def _health() -> dict[str, Any]:
     hub = BinanceWSHub.instance()
     ref = library_status()
     connected = hub.websocket_connected()
+    tickers = hub.ticker_count()
     refs_ready = int(ref.get("count", 0)) >= 10
+    last_age = hub.last_message_age_seconds()
+    market_live = connected and tickers > 0 and last_age is not None and last_age < 30
 
     return {
-        "status": "ok" if connected and refs_ready else "degraded",
+        "status": "ok" if market_live and refs_ready else "degraded",
         "service": "xora-chart-ai",
         "transport": "websocket-only",
         "market_data": "binance-websocket-only",
         "rest_market_data": False,
+        "market_live": market_live,
         "ws_connected": connected,
-        "ws_tickers": hub.ticker_count(),
+        "ws_tickers": tickers,
         "ws_ready_symbols": hub.ready_symbol_count(),
         "ws_min_candles": MIN_CANDLES,
-        "ws_last_message_age_seconds": hub.last_message_age_seconds(),
+        "ws_last_message_age_seconds": last_age,
         "auto_trade": settings.get("auto_trade", False),
         "trade_mode": settings.get("trade_mode", "demo"),
         "latest_cycle_id": latest.cycle_id if latest else None,
