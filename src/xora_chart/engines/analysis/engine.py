@@ -20,10 +20,28 @@ def _status(score: float, pass_at: float = 65, fail_at: float = 35) -> SignalSta
     return SignalStatus.WEAK
 
 
+def _volume_available(window: CandleWindow) -> bool:
+    """Return True only when the full scoring window has real Binance volume."""
+    recent = [float(c.volume) for c in window.candles[-20:]]
+    return len(recent) >= 20 and all(v > 0 for v in recent)
+
+
 def _volume_signal(window: CandleWindow) -> AnalysisSignal:
-    vols = [c.volume for c in window.candles]
+    vols = [float(c.volume) for c in window.candles]
     if len(vols) < 20:
-        return AnalysisSignal(name="volume", score=40, status=SignalStatus.WEAK, note="Insufficient WS bars")
+        return AnalysisSignal(
+            name="volume",
+            score=50,
+            status=SignalStatus.WEAK,
+            note="Insufficient WS bars; excluded from weighted score",
+        )
+    if not _volume_available(window):
+        return AnalysisSignal(
+            name="volume",
+            score=50,
+            status=SignalStatus.WEAK,
+            note="Native Binance kline volume unavailable on sampled WS bars; excluded from weighted score",
+        )
     avg = sum(vols[-20:-1]) / 19
     last = vols[-1]
     ratio = (last / avg) if avg > 0 else 1.0
@@ -113,11 +131,9 @@ async def run_analysis(window: CandleWindow, match: PatternMatch | None = None) 
     cfg = load_config().get("analysis", {})
     weights = cfg.get("weights", {})
 
-    # Open interest is deliberately excluded from the weighted score because
-    # XORA forbids the former REST lookup. Remaining WS-derived weights are
-    # normalized to 1.0 so the score keeps the same 0–100 scale.
+    volume_available = _volume_available(window)
     raw_weights = {
-        "volume": float(weights.get("volume", 0.30)),
+        "volume": float(weights.get("volume", 0.30)) if volume_available else 0.0,
         "order_book": float(weights.get("order_book", 0.25)),
         "funding": float(weights.get("funding", 0.15)),
         "volatility": float(weights.get("volatility", 0.20)),
@@ -142,6 +158,8 @@ async def run_analysis(window: CandleWindow, match: PatternMatch | None = None) 
     bias = _trend_bias(window)
     details = {
         "volume_ratio_note": vol_sig.note,
+        "volume_available": volume_available,
+        "volume_weight": round(normalized["volume"], 6),
         "regime": regime.value,
         "pattern_key": match.pattern_key if match else None,
         "market_data_source": "binance_websocket_only",
