@@ -52,33 +52,48 @@ jobs:
           ./deploy/gcp/deploy.sh
           sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
-      - name: Diagnose Binance Futures bootstrap endpoints
+      - name: Diagnose Binance Futures WebSocket API
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== Binance Futures HTTP controls from production VM ==="
-          for url in \
-            'https://fapi.binance.com/fapi/v1/time' \
-            'https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT' \
-            'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=2' \
-            'https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT' \
-            'https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT'; do
-            code="$(curl -sS --max-time 12 -o /tmp/binance_probe.json -w '%{http_code}' "$url" || true)"
-            bytes="$(wc -c </tmp/binance_probe.json 2>/dev/null || echo 0)"
-            body="$(head -c 180 /tmp/binance_probe.json 2>/dev/null | tr '\n' ' ' || true)"
-            echo "HTTP_CONTROL $code bytes=$bytes url=$url body=$body"
-          done
+          docker run --rm python:3.12-slim sh -lc '
+            pip install -q websockets && python - <<"PY"
+          import asyncio
+          import json
+          import websockets
 
-      - name: Diagnose market WebSockets
+          async def request(ws, req_id, method, params):
+              await ws.send(json.dumps({"id": req_id, "method": method, "params": params}))
+              raw = await asyncio.wait_for(ws.recv(), timeout=12)
+              data = json.loads(raw)
+              result = data.get("result")
+              if isinstance(result, list):
+                  summary = f"list[{len(result)}] first={result[0] if result else None}"
+              else:
+                  summary = repr(result)
+              print("WS_API", method, "status=", data.get("status"), "result=", summary[:500], "error=", data.get("error"))
+
+          async def main():
+              url = "wss://ws-fapi.binance.com/ws-fapi/v1"
+              try:
+                  async with websockets.connect(url, open_timeout=10, close_timeout=3, ping_interval=None) as ws:
+                      print("WS_API_CONNECTED", url)
+                      await request(ws, "price-all", "ticker.price", {})
+                      await request(ws, "book-all", "ticker.book", {})
+                      await request(ws, "depth-btc", "depth", {"symbol": "BTCUSDT", "limit": 20})
+              except Exception as exc:
+                  print("WS_API_ERROR", type(exc).__name__, repr(exc))
+
+          asyncio.run(main())
+          PY
+          '
+
+      - name: Report current Binance stream availability
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== Backend recent WebSocket logs ==="
-          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker|kline|depth|mark|aggTrade|bookTicker' | tail -n 180 || true
-
-          echo "=== Current VM WebSocket controls ==="
           docker run --rm python:3.12-slim sh -lc '
             pip install -q websockets && python - <<"PY"
           import asyncio
@@ -86,80 +101,24 @@ jobs:
           import websockets
 
           PROBES = {
-              "futures_ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
-              "futures_mini_ticker": "wss://fstream.binance.com/ws/btcusdt@miniTicker",
-              "futures_kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
-              "futures_mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
-              "futures_depth": "wss://fstream.binance.com/ws/btcusdt@depth20@100ms",
-              "futures_agg_trade": "wss://fstream.binance.com/ws/btcusdt@aggTrade",
-              "futures_book_ticker": "wss://fstream.binance.com/ws/btcusdt@bookTicker",
-              "futures_all_book_ticker": "wss://fstream.binance.com/ws/!bookTicker",
-              "futures_combined_alt": "wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker/btcusdt@depth20@100ms",
-              "spot_ticker_443": "wss://stream.binance.com:443/ws/btcusdt@ticker",
-              "spot_ticker_9443": "wss://stream.binance.com:9443/ws/btcusdt@ticker",
+              "ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
+              "mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+              "book": "wss://fstream.binance.com/ws/btcusdt@bookTicker",
+              "depth": "wss://fstream.binance.com/ws/btcusdt@depth20@100ms",
           }
 
           async def probe(name, url):
               try:
-                  async with websockets.connect(
-                      url,
-                      open_timeout=10,
-                      close_timeout=3,
-                      ping_interval=None,
-                  ) as ws:
-                      raw = await asyncio.wait_for(ws.recv(), timeout=12)
-                      try:
-                          data = json.loads(raw)
-                          event = data.get("e") if isinstance(data, dict) else None
-                          stream = data.get("stream") if isinstance(data, dict) else None
-                          print("WS_CONTROL_OK", name, "event=", event, "stream=", stream, "bytes=", len(raw))
-                      except Exception:
-                          print("WS_CONTROL_OK", name, "bytes=", len(raw))
-                      return True
+                  async with websockets.connect(url, open_timeout=8, close_timeout=2, ping_interval=None) as ws:
+                      raw = await asyncio.wait_for(ws.recv(), timeout=8)
+                      data = json.loads(raw)
+                      print("STREAM_OK", name, "event=", data.get("e"), "bytes=", len(raw))
               except Exception as exc:
-                  print("WS_CONTROL_ERROR", name, type(exc).__name__, repr(exc))
-                  return False
-
-          async def subscribe_probe():
-              name = "futures_subscribe_rpc_alt"
-              try:
-                  async with websockets.connect(
-                      "wss://fstream.binance.com/ws",
-                      open_timeout=10,
-                      close_timeout=3,
-                      ping_interval=None,
-                  ) as ws:
-                      await ws.send(json.dumps({
-                          "method": "SUBSCRIBE",
-                          "params": [
-                              "btcusdt@aggTrade",
-                              "btcusdt@bookTicker",
-                              "btcusdt@depth20@100ms",
-                              "btcusdt@ticker",
-                              "btcusdt@kline_1m",
-                              "btcusdt@markPrice@1s",
-                          ],
-                          "id": 1,
-                      }))
-                      deadline = asyncio.get_running_loop().time() + 12
-                      seen = set()
-                      while asyncio.get_running_loop().time() < deadline and len(seen) < 3:
-                          raw = await asyncio.wait_for(ws.recv(), timeout=12)
-                          data = json.loads(raw)
-                          if isinstance(data, dict) and data.get("id") == 1:
-                              print("WS_CONTROL_ACK", name, data)
-                              continue
-                          event = data.get("e") if isinstance(data, dict) else None
-                          seen.add(event or "bookTicker")
-                          print("WS_CONTROL_OK", name, "event=", event, "bytes=", len(raw))
-                      return bool(seen)
-              except Exception as exc:
-                  print("WS_CONTROL_ERROR", name, type(exc).__name__, repr(exc))
-                  return False
+                  print("STREAM_ERROR", name, type(exc).__name__, repr(exc))
 
           async def main():
               await asyncio.gather(*(probe(name, url) for name, url in PROBES.items()))
-              await subscribe_probe()
 
           asyncio.run(main())
           PY
@@ -190,14 +149,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for i in {1..18}; do
-            HTTP_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
-            HTTPS_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
-            if [[ "$HTTPS_CODE" == "200" || "$HTTP_CODE" == "200" || "$HTTP_CODE" == "301" || "$HTTP_CODE" == "302" ]]; then
-              echo "Frontend reachable (HTTP=${HTTP_CODE:-none}, HTTPS=${HTTPS_CODE:-none})."
-              exit 0
-            fi
-            sleep 5
-          done
+          HTTP_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+          HTTPS_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
+          if [[ "$HTTPS_CODE" == "200" || "$HTTP_CODE" == "200" || "$HTTP_CODE" == "301" || "$HTTP_CODE" == "302" ]]; then
+            echo "Frontend reachable (HTTP=${HTTP_CODE:-none}, HTTPS=${HTTPS_CODE:-none})."
+            exit 0
+          fi
           echo "Local frontend verification failed. HTTP=${HTTP_CODE:-none} HTTPS=${HTTPS_CODE:-none}" >&2
           exit 1
