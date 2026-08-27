@@ -14,7 +14,7 @@ def test_binance_market_service_has_no_rest_client_or_endpoint():
     source = text("src/xora_chart/services/binance_ws.py")
     forbidden = [
         "import httpx",
-        "fapi.binance.com",
+        "https://fapi.binance.com",
         "/fapi/v1/",
         "AsyncClient(",
         "_http_get",
@@ -23,6 +23,7 @@ def test_binance_market_service_has_no_rest_client_or_endpoint():
     ]
     for marker in forbidden:
         assert marker not in source, f"REST market-data path returned: {marker}"
+    assert "wss://ws-fapi.binance.com/ws-fapi/v1" in source
 
 
 def test_frontend_uses_websocket_not_fetch_for_backend_data():
