@@ -73,3 +73,182 @@ button:active:not(:disabled) { transform: translateY(1px); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #26344f; border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: #4f8cff; }
+
+/* Mobile browser mode -----------------------------------------------------
+   The app is used inside Chrome/Samsung Internet with dynamic address and
+   navigation bars.  Use the dynamic viewport, let the page itself scroll,
+   keep primary actions thumb-sized, and turn the existing tab bar into a
+   compact bottom navigation instead of squeezing it beside the logo. */
+@media (max-width: 767px) {
+  html, body, #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+  }
+
+  .xora-grid {
+    height: auto !important;
+    min-height: 100dvh;
+    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+    background-size: 22px 22px;
+  }
+
+  .xora-grid > header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    padding: 10px 12px;
+    background: rgba(5, 8, 16, .92);
+  }
+
+  .xora-grid > header > div {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .xora-grid > header .xora-brand-mark {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+  }
+
+  .xora-grid > header nav {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 80;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 5px;
+    border: 1px solid rgba(99, 130, 177, .22);
+    border-radius: 18px;
+    background: rgba(7, 12, 23, .94);
+    box-shadow: 0 16px 50px rgba(0,0,0,.48), inset 0 1px 0 rgba(255,255,255,.035);
+    backdrop-filter: blur(20px);
+  }
+
+  .xora-grid > header nav button {
+    min-height: 44px;
+    width: 100%;
+    padding: 0 8px !important;
+    border-radius: 13px;
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+
+  .xora-grid > header > div > div:last-child {
+    margin-left: auto;
+    min-width: 0;
+  }
+
+  .xora-grid > header > div > div:last-child > div:last-child {
+    padding: 8px 10px;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+
+  /* Signals/positions/knowledge pages stack naturally on phones rather than
+     forcing nested full-height panes that create the large empty area seen in
+     mobile browsers. */
+  .xora-grid > div.flex.min-h-0.flex-1 {
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+
+  .xora-grid aside {
+    width: 100% !important;
+    max-height: none !important;
+  }
+
+  .xora-grid aside > div:first-child {
+    padding: 14px 12px;
+  }
+
+  .xora-grid aside button,
+  .xora-grid aside input,
+  .xora-grid main button {
+    min-height: 44px;
+  }
+
+  .xora-grid aside form {
+    gap: 8px;
+  }
+
+  .xora-grid aside form input {
+    font-size: 16px; /* prevents automatic browser zoom on focus */
+    padding: 10px 12px;
+  }
+
+  .xora-grid aside form button {
+    min-width: 84px;
+    padding-inline: 12px;
+  }
+
+  .xora-grid aside > div:nth-child(2) {
+    max-height: 250px !important;
+    padding: 10px 12px 12px;
+  }
+
+  .xora-grid main {
+    min-height: 0;
+    overflow: visible !important;
+  }
+
+  .xora-grid main > div {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Empty signal desk: keep the useful status visible immediately instead of
+     centering it in a desktop-height canvas below the controls. */
+  .xora-grid main .min-h-\[360px\] {
+    min-height: 270px !important;
+    align-items: flex-start;
+    padding: 30px 18px 24px;
+  }
+
+  .xora-grid main .min-h-\[360px\] h2 {
+    font-size: 21px;
+    line-height: 1.2;
+  }
+
+  .xora-grid main .min-h-\[360px\] p {
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .xora-grid main .grid-cols-2 {
+    gap: 8px;
+  }
+
+  .xora-grid main .p-4,
+  .xora-grid main .sm\:p-6 {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  canvas, svg {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  .xora-grid > header > div > div:last-child > div:last-child {
+    padding-inline: 8px;
+    letter-spacing: .06em;
+  }
+
+  .xora-grid aside form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 82px;
+  }
+}
