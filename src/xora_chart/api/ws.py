@@ -45,7 +45,14 @@ def _health() -> dict[str, Any]:
     tickers = hub.ticker_count()
     refs_ready = int(ref.get("count", 0)) >= 10
     last_age = hub.last_message_age_seconds()
-    market_live = connected and tickers > 0 and last_age is not None and last_age < 30
+    events = hub.event_telemetry()
+    ticker_age = events["ticker"]["age_seconds"]
+    market_live = (
+        connected
+        and tickers > 0
+        and ticker_age is not None
+        and float(ticker_age) < 30
+    )
 
     return {
         "status": "ok" if market_live and refs_ready else "degraded",
@@ -59,6 +66,7 @@ def _health() -> dict[str, Any]:
         "ws_ready_symbols": hub.ready_symbol_count(),
         "ws_min_candles": MIN_CANDLES,
         "ws_last_message_age_seconds": last_age,
+        "ws_events": events,
         "auto_trade": settings.get("auto_trade", False),
         "trade_mode": settings.get("trade_mode", "demo"),
         "latest_cycle_id": latest.cycle_id if latest else None,
