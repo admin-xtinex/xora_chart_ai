@@ -20,7 +20,7 @@ jobs:
     name: Deploy production
     runs-on: [self-hosted, linux, x64]
     environment: production
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Deploy directly on production VM
@@ -119,6 +119,120 @@ jobs:
           asyncio.run(main())
           PY
           '
+
+      - name: Probe Always Free regions when current feed is blocked
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          PROJECT="xtinex-trading"
+          PROBE_PREFIX="xora-ws-probe"
+
+          cat > /tmp/xora-region-probe.sh <<'SCRIPT'
+          #!/bin/bash
+          exec > >(tee /dev/ttyS0) 2>&1
+          set -u
+          export DEBIAN_FRONTEND=noninteractive
+          echo "XORA_PROBE_START $(date -Is)"
+          apt-get update -qq
+          apt-get install -y -qq python3-pip >/dev/null
+          python3 -m pip install --break-system-packages -q websockets
+          python3 - <<'PY'
+          import asyncio
+          import json
+          import websockets
+
+          STREAMS = {
+              "ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
+              "mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+          }
+
+          async def probe(name, url):
+              try:
+                  async with websockets.connect(
+                      url,
+                      open_timeout=10,
+                      close_timeout=3,
+                      ping_interval=None,
+                  ) as ws:
+                      raw = await asyncio.wait_for(ws.recv(), timeout=12)
+                      data = json.loads(raw)
+                      print("XORA_WS_OK", name, type(data).__name__, str(data)[:180])
+                      return True
+              except Exception as exc:
+                  print("XORA_WS_ERROR", name, type(exc).__name__, repr(exc))
+                  return False
+
+          async def main():
+              results = await asyncio.gather(*(probe(name, url) for name, url in STREAMS.items()))
+              print("XORA_PROBE_VIABLE" if all(results) else "XORA_PROBE_BLOCKED")
+
+          asyncio.run(main())
+          PY
+          echo "XORA_PROBE_DONE $(date -Is)"
+          SCRIPT
+          chmod +x /tmp/xora-region-probe.sh
+
+          probe_zone() {
+            local zone="$1"
+            local suffix="${zone//-/}"
+            local name="${PROBE_PREFIX}-${suffix}"
+            local output=""
+
+            echo "=== Probe ${zone} ==="
+            gcloud compute instances delete "$name" --zone="$zone" --project="$PROJECT" --quiet >/dev/null 2>&1 || true
+
+            if ! gcloud compute instances create "$name" \
+              --project="$PROJECT" \
+              --zone="$zone" \
+              --machine-type=e2-micro \
+              --image-family=debian-12 \
+              --image-project=debian-cloud \
+              --boot-disk-size=10GB \
+              --boot-disk-type=pd-standard \
+              --network=default \
+              --network-tier=STANDARD \
+              --no-service-account \
+              --no-scopes \
+              --metadata=serial-port-enable=TRUE \
+              --metadata-from-file=startup-script=/tmp/xora-region-probe.sh \
+              --quiet; then
+              echo "XORA_REGION_CREATE_ERROR ${zone}"
+              return 2
+            fi
+
+            for _ in $(seq 1 48); do
+              output="$(gcloud compute instances get-serial-port-output "$name" --zone="$zone" --project="$PROJECT" 2>/dev/null || true)"
+              if grep -q "XORA_PROBE_DONE" <<<"$output"; then
+                break
+              fi
+              sleep 5
+            done
+
+            echo "$output" | grep -E 'XORA_(WS_|PROBE_)' || true
+            local rc=1
+            if grep -q "XORA_PROBE_VIABLE" <<<"$output"; then
+              rc=0
+            fi
+
+            gcloud compute instances delete "$name" --zone="$zone" --project="$PROJECT" --quiet || true
+            return "$rc"
+          }
+
+          SELECTED_ZONE=""
+          if probe_zone "us-west1-b"; then
+            SELECTED_ZONE="us-west1-b"
+          elif probe_zone "us-east1-b"; then
+            SELECTED_ZONE="us-east1-b"
+          fi
+
+          if [[ -n "$SELECTED_ZONE" ]]; then
+            echo "XORA_SELECTED_FREE_TIER_ZONE=$SELECTED_ZONE"
+          else
+            echo "XORA_NO_VIABLE_FREE_TIER_ZONE"
+          fi
 
       - name: Verify local frontend
         if: always()
