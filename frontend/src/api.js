@@ -92,8 +92,13 @@ export function fetchOpportunities(limit = 30) {
   return rpc('opportunities.list', { limit })
 }
 
-export function runCycle() {
-  return rpc('cycle.run')
+export async function runCycle() {
+  const result = await rpc('cycle.run')
+  const errors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : []
+  if (errors.length) {
+    throw new Error(errors.join(' · '))
+  }
+  return result
 }
 
 export function analyzeSymbol(symbol) {
