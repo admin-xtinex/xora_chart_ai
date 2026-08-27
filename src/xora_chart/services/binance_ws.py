@@ -31,8 +31,6 @@ MAX_CANDLES = 120
 MIN_CANDLES = 20
 STATE_PATH = Path(os.getenv("XORA_WS_STATE_PATH", "/app/state/ws_market.json"))
 
-# WS-only bootstrap universe. These are subscription seeds, not trading signals.
-# Discovery still ranks symbols using live ticker data received from Binance.
 BOOTSTRAP_SYMBOLS = (
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
     "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT", "BCHUSDT", "DOTUSDT",
@@ -47,8 +45,6 @@ class BinanceWSHub:
 
     def __init__(self) -> None:
         self._tickers: dict[str, dict[str, Any]] = {}
-        # _candles contains CLOSED candles only. In-progress candles live in
-        # _live_candles and are never used for strategy history/readiness.
         self._candles: dict[str, deque[Candle]] = defaultdict(lambda: deque(maxlen=MAX_CANDLES))
         self._live_candles: dict[str, Candle] = {}
         self._books: dict[str, dict[str, Any]] = {}
@@ -59,6 +55,8 @@ class BinanceWSHub:
         self._running = False
         self._connected = False
         self._last_message_monotonic: float | None = None
+        self._event_counts: dict[str, int] = defaultdict(int)
+        self._last_event_monotonic: dict[str, float] = {}
         self._load_ws_state()
 
     @classmethod
@@ -169,8 +167,23 @@ class BinanceWSHub:
             return None
         return max(0.0, time.monotonic() - self._last_message_monotonic)
 
+    def event_telemetry(self) -> dict[str, dict[str, float | int | None]]:
+        now = time.monotonic()
+        result: dict[str, dict[str, float | int | None]] = {}
+        for kind in ("ticker", "kline", "depth", "mark", "unknown"):
+            last = self._last_event_monotonic.get(kind)
+            result[kind] = {
+                "count": int(self._event_counts.get(kind, 0)),
+                "age_seconds": None if last is None else max(0.0, now - last),
+            }
+        return result
+
     def ready_symbol_count(self) -> int:
         return sum(1 for candles in self._candles.values() if len(candles) >= MIN_CANDLES)
+
+    def _record_event(self, kind: str) -> None:
+        self._event_counts[kind] += 1
+        self._last_event_monotonic[kind] = time.monotonic()
 
     async def _run_forever(self) -> None:
         log.info("Binance WS-only hub starting")
@@ -187,8 +200,6 @@ class BinanceWSHub:
         log.info("Binance WS-only hub stopped")
 
     async def _session(self) -> None:
-        # Keep the all-market stream as an opportunistic source, but never rely
-        # on it. Individual ticker streams provide deterministic bootstrap data.
         streams = ["!ticker@arr"]
         symbols = sorted(self._desired_symbols)[:40]
         for sym in symbols:
@@ -219,26 +230,32 @@ class BinanceWSHub:
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
+                    self._record_event("unknown")
                     continue
 
                 data = msg.get("data", msg)
                 stream = msg.get("stream", "")
 
                 if stream == "!ticker@arr" or isinstance(data, list):
+                    self._record_event("ticker")
                     if isinstance(data, list):
                         for t in data:
                             self._store_ticker(t)
                 elif stream.endswith("@ticker"):
+                    self._record_event("ticker")
                     self._store_ticker(data)
                 elif "@kline_" in stream:
+                    self._record_event("kline")
                     self._handle_kline(data)
                 elif "@depth" in stream:
+                    self._record_event("depth")
                     sym = stream.split("@")[0].upper()
                     self._books[sym] = {
                         "bids": data.get("b") or [],
                         "asks": data.get("a") or [],
                     }
                 elif "@markPrice" in stream:
+                    self._record_event("mark")
                     sym = (data.get("s") or "").upper()
                     if sym:
                         self._mark[sym] = {
@@ -247,6 +264,9 @@ class BinanceWSHub:
                             "lastFundingRate": data.get("r"),
                             "nextFundingTime": data.get("T"),
                         }
+                else:
+                    self._record_event("unknown")
+                    log.debug("Unhandled Binance WS event stream=%s data_type=%s", stream, type(data).__name__)
         self._connected = False
 
     def _store_ticker(self, ticker: dict[str, Any]) -> None:
