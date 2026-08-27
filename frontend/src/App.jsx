@@ -88,8 +88,10 @@ function Brand() {
 
 function EmptyState({ health }) {
   const connected = !!health?.ws_connected
+  const marketLive = health?.market_live === true
   const tickers = Number(health?.ws_tickers || 0)
   const ready = Number(health?.ws_ready_symbols || 0)
+  const latestError = health?.latest_cycle_errors?.[0]
   return (
     <div className="flex h-full min-h-[360px] items-center justify-center p-8">
       <div className="max-w-md text-center">
@@ -97,13 +99,16 @@ function EmptyState({ health }) {
           <div className="xora-brand-mark scale-75" />
         </div>
         <div className="text-[10px] font-semibold uppercase tracking-[.28em] text-blue-300">Market intelligence</div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">Waiting for a qualified setup</h2>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">{marketLive ? 'Waiting for a qualified setup' : 'Waiting for live market data'}</h2>
         <p className="mt-3 text-sm leading-6 text-slate-400">
-          XORA filters market noise through live WebSocket data, reference-chart matching and risk gates before surfacing an opportunity.
+          {marketLive
+            ? 'XORA filters market noise through live WebSocket data, reference-chart matching and risk gates before surfacing an opportunity.'
+            : 'The application connection is available, but XORA will not scan or analyze until the Binance Futures WebSocket feed is delivering usable market data.'}
         </p>
+        {latestError && <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{latestError}</div>}
         <div className="mt-6 grid grid-cols-3 gap-2 text-left">
           {[
-            ['Feed', connected ? 'Online' : 'Offline'],
+            ['Feed', marketLive ? 'Live' : connected ? 'No data' : 'Offline'],
             ['Tickers', tickers],
             ['Ready', ready],
           ].map(([label, value]) => (
@@ -450,9 +455,10 @@ export default function App() {
     try { await updateSettings({ auto_trade: on }) } catch { setAutoTrade(!on) }
   }
 
-  const wsHealthy = !!health?.ws_connected && Number(health?.ws_last_message_age_seconds ?? 999) < 30
+  const wsHealthy = health?.market_live === true
   const ready = Number(health?.ws_ready_symbols || 0)
   const tickers = Number(health?.ws_tickers || 0)
+  const marketStatus = wsHealthy ? 'Market live' : health?.ws_connected ? 'Feed unavailable' : health ? 'Market offline' : 'Connecting'
 
   return (
     <div className="xora-grid flex h-full flex-col bg-xora-950 text-slate-100">
@@ -479,7 +485,7 @@ export default function App() {
             </div>
             <div className={`flex items-center gap-2 rounded-full border px-3 py-2 text-[10px] font-semibold uppercase tracking-[.12em] ${wsHealthy ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/25 bg-amber-500/10 text-amber-300'}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${wsHealthy ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              {wsHealthy ? 'Market live' : health ? 'Warming up' : 'Connecting'}
+              {marketStatus}
             </div>
           </div>
         </div>
