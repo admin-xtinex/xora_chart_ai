@@ -52,6 +52,24 @@ jobs:
           ./deploy/gcp/deploy.sh
           sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
+      - name: Diagnose Binance Futures bootstrap endpoints
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Binance Futures HTTP controls from production VM ==="
+          for url in \
+            'https://fapi.binance.com/fapi/v1/time' \
+            'https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT' \
+            'https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=2' \
+            'https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT' \
+            'https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT'; do
+            code="$(curl -sS --max-time 12 -o /tmp/binance_probe.json -w '%{http_code}' "$url" || true)"
+            bytes="$(wc -c </tmp/binance_probe.json 2>/dev/null || echo 0)"
+            body="$(head -c 180 /tmp/binance_probe.json 2>/dev/null | tr '\n' ' ' || true)"
+            echo "HTTP_CONTROL $code bytes=$bytes url=$url body=$body"
+          done
+
       - name: Diagnose market WebSockets
         if: always()
         shell: bash
