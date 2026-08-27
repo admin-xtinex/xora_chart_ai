@@ -12,7 +12,16 @@ def test_bootstrap_watchlist_is_present():
 
 def test_individual_ticker_is_stored():
     hub = BinanceWSHub()
-    hub._store_ticker({"s": "BTCUSDT", "P": "2.5", "q": "1000000"})
+    hub._store_ticker({"s": "BTCUSDT", "c": "80000", "P": "2.5", "q": "1000000"})
+    assert hub.ticker_count() == 1
+    coins = hub.discover_coins(min_quote_volume=500_000)
+    assert coins
+    assert coins[0].symbol == "BTCUSDT"
+
+
+def test_ws_api_price_snapshot_is_discoverable():
+    hub = BinanceWSHub()
+    hub._store_price_snapshot({"symbol": "BTCUSDT", "price": "80000", "time": 60_000})
     assert hub.ticker_count() == 1
     coins = hub.discover_coins(min_quote_volume=500_000)
     assert coins
