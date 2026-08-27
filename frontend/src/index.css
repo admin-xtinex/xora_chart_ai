@@ -2,22 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
-  height: 100%;
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --xora-bg: #050810;
+  --xora-panel: rgba(13, 20, 34, 0.78);
+  --xora-line: rgba(99, 130, 177, 0.16);
+  --xora-blue: #4f8cff;
+  --xora-cyan: #5ee7f7;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 15% -10%, rgba(79, 140, 255, .16), transparent 32rem),
+    radial-gradient(circle at 88% 0%, rgba(94, 231, 247, .08), transparent 26rem),
+    #050810;
 }
-::-webkit-scrollbar-track {
-  background: #0f1520;
+
+* { box-sizing: border-box; }
+button, input { font: inherit; }
+button { transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
+button:active:not(:disabled) { transform: translateY(1px); }
+
+::selection { background: rgba(79, 140, 255, .35); color: white; }
+
+.xora-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+  background-size: 28px 28px;
 }
-::-webkit-scrollbar-thumb {
-  background: #243047;
-  border-radius: 4px;
+
+.xora-glass {
+  background: var(--xora-panel);
+  border: 1px solid var(--xora-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 18px 55px rgba(0,0,0,.18);
+  backdrop-filter: blur(18px);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #3b82f6;
+
+.xora-brand-mark {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgba(79,140,255,.28), rgba(94,231,247,.08));
+  border: 1px solid rgba(112,164,255,.35);
+  box-shadow: 0 0 30px rgba(79,140,255,.14);
 }
+.xora-brand-mark::before,
+.xora-brand-mark::after {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffffff, #73c8ff);
+}
+.xora-brand-mark::before { transform: rotate(45deg); }
+.xora-brand-mark::after { transform: rotate(-45deg); }
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #26344f; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #4f8cff; }
