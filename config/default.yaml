@@ -7,21 +7,24 @@ discovery:
   top_losers: 5
   top_volume: 5
   trending: 5
+  scan_limit: 20
   quote_asset: USDT
   min_quote_volume: 500000
 
 market_data:
   interval: "1m"
   candle_limit: 100
-  venue: binance_futures_websocket
+  history_source: binance_futures_rest
+  live_source: binance_futures_websocket
+  minimum_history_candles: 20
   minimum_ws_candles: 20
+  history_concurrency: 5
 
 matcher:
   min_similarity: 55.0
   max_matches_per_symbol: 3
 
 analysis:
-  # Only signals available from approved WebSocket streams are weighted.
   weights:
     volume: 0.35
     order_book: 0.30

@@ -1,4 +1,4 @@
-"""Analysis Engine — market context scores from WebSocket observations only."""
+"""Analysis Engine — REST history plus WebSocket live market evidence."""
 
 from __future__ import annotations
 
@@ -20,33 +20,23 @@ def _status(score: float, pass_at: float = 65, fail_at: float = 35) -> SignalSta
     return SignalStatus.WEAK
 
 
-def _volume_available(window: CandleWindow) -> bool:
-    """Return True only when the full scoring window has real Binance volume."""
-    recent = [float(c.volume) for c in window.candles[-20:]]
-    return len(recent) >= 20 and all(v > 0 for v in recent)
-
-
 def _volume_signal(window: CandleWindow) -> AnalysisSignal:
     vols = [float(c.volume) for c in window.candles]
     if len(vols) < 20:
+        return AnalysisSignal(name="volume", score=50, status=SignalStatus.WEAK, note="Insufficient history bars")
+    recent = vols[-20:]
+    if not any(v > 0 for v in recent):
         return AnalysisSignal(
             name="volume",
             score=50,
             status=SignalStatus.WEAK,
-            note="Insufficient WS bars; excluded from weighted score",
+            note="Volume unavailable on WebSocket recovery candles",
         )
-    if not _volume_available(window):
-        return AnalysisSignal(
-            name="volume",
-            score=50,
-            status=SignalStatus.WEAK,
-            note="Native Binance kline volume unavailable on sampled WS bars; excluded from weighted score",
-        )
-    avg = sum(vols[-20:-1]) / 19
-    last = vols[-1]
+    avg = sum(recent[:-1]) / 19
+    last = recent[-1]
     ratio = (last / avg) if avg > 0 else 1.0
     score = max(0.0, min(100.0, (ratio - 0.5) / 2.0 * 100))
-    note = f"WS kline volume {ratio:.2f}× 20-bar avg"
+    note = f"REST kline volume {ratio:.2f}× 20-bar avg"
     return AnalysisSignal(name="volume", score=round(score, 1), status=_status(score), note=note)
 
 
@@ -54,7 +44,7 @@ def _volatility_signal(window: CandleWindow) -> tuple[AnalysisSignal, MarketRegi
     candles = window.candles
     if len(candles) < 20:
         return (
-            AnalysisSignal(name="volatility", score=50, status=SignalStatus.WEAK, note="Insufficient WS bars"),
+            AnalysisSignal(name="volatility", score=50, status=SignalStatus.WEAK, note="Insufficient history bars"),
             MarketRegime.RANGING,
         )
     ranges = [(c.high - c.low) / c.close for c in candles[-20:] if c.close]
@@ -62,15 +52,15 @@ def _volatility_signal(window: CandleWindow) -> tuple[AnalysisSignal, MarketRegi
     if atr_pct < 0.08:
         regime = MarketRegime.LOW_VOL
         score = 35
-        note = f"WS ATR% {atr_pct:.3f} — low volatility"
+        note = f"Historical ATR% {atr_pct:.3f} — low volatility"
     elif atr_pct > 1.2:
         regime = MarketRegime.HIGH_VOL
         score = 40
-        note = f"WS ATR% {atr_pct:.3f} — high volatility"
+        note = f"Historical ATR% {atr_pct:.3f} — high volatility"
     else:
         regime = MarketRegime.TRENDING if atr_pct > 0.25 else MarketRegime.RANGING
         score = 70 if 0.12 <= atr_pct <= 0.9 else 55
-        note = f"WS ATR% {atr_pct:.3f} — tradeable"
+        note = f"Historical ATR% {atr_pct:.3f} — tradeable"
     return AnalysisSignal(name="volatility", score=float(score), status=_status(score, 55, 30), note=note), regime
 
 
@@ -123,7 +113,7 @@ def _oi_signal_unavailable() -> AnalysisSignal:
         name="open_interest",
         score=50,
         status=SignalStatus.WEAK,
-        note="Excluded: no approved WebSocket source",
+        note="Excluded: no approved live WebSocket source",
     )
 
 
@@ -131,21 +121,26 @@ async def run_analysis(window: CandleWindow, match: PatternMatch | None = None) 
     cfg = load_config().get("analysis", {})
     weights = cfg.get("weights", {})
 
-    volume_available = _volume_available(window)
-    raw_weights = {
-        "volume": float(weights.get("volume", 0.30)) if volume_available else 0.0,
-        "order_book": float(weights.get("order_book", 0.25)),
-        "funding": float(weights.get("funding", 0.15)),
-        "volatility": float(weights.get("volatility", 0.20)),
-    }
-    total_weight = sum(raw_weights.values()) or 1.0
-    normalized = {k: v / total_weight for k, v in raw_weights.items()}
-
     vol_sig = _volume_signal(window)
     atr_sig, regime = _volatility_signal(window)
     book_sig = await _book_signal(window.symbol)
     fund_sig = await _funding_signal(window.symbol)
     oi_sig = _oi_signal_unavailable()
+
+    volume_available = any(float(c.volume) > 0 for c in window.candles[-20:])
+    book_available = "not ready" not in book_sig.note.lower()
+    funding_available = "not ready" not in fund_sig.note.lower()
+
+    # Missing live signals are excluded instead of being silently scored as
+    # neutral.  Available evidence is renormalized back onto a 0–100 scale.
+    raw_weights = {
+        "volume": float(weights.get("volume", 0.30)) if volume_available else 0.0,
+        "order_book": float(weights.get("order_book", 0.25)) if book_available else 0.0,
+        "funding": float(weights.get("funding", 0.15)) if funding_available else 0.0,
+        "volatility": float(weights.get("volatility", 0.20)),
+    }
+    total_weight = sum(raw_weights.values()) or 1.0
+    normalized = {k: v / total_weight for k, v in raw_weights.items()}
 
     signals = [vol_sig, book_sig, fund_sig, oi_sig, atr_sig]
     score = (
@@ -158,11 +153,13 @@ async def run_analysis(window: CandleWindow, match: PatternMatch | None = None) 
     bias = _trend_bias(window)
     details = {
         "volume_ratio_note": vol_sig.note,
-        "volume_available": volume_available,
-        "volume_weight": round(normalized["volume"], 6),
         "regime": regime.value,
         "pattern_key": match.pattern_key if match else None,
-        "market_data_source": "binance_websocket_only",
+        "market_data_source": "binance_rest_history_websocket_live",
+        "volume_weight": round(normalized["volume"], 4),
+        "order_book_weight": round(normalized["order_book"], 4),
+        "funding_weight": round(normalized["funding"], 4),
+        "volatility_weight": round(normalized["volatility"], 4),
         "open_interest_weight": 0.0,
     }
 

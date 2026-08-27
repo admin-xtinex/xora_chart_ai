@@ -22,14 +22,15 @@ async def _cycle_loop() -> None:
         log.info("Automatic scan cycle disabled")
         return
 
-    # Give the all-market ticker stream time to populate and subscribe the
-    # discovered watchlist before attempting candle-based analysis.
+    # Give the live WebSocket price feed time to populate before the first scan.
+    # Historical windows use Binance Futures REST when reachable; the persisted
+    # WS candle cache remains a recovery path for backend locations receiving 451.
     await asyncio.sleep(10)
     while True:
         try:
             result = await run_cycle()
             log.info(
-                "WS-only cycle %s scanned=%d opportunities=%d errors=%d",
+                "Hybrid cycle %s scanned=%d opportunities=%d errors=%d",
                 result.cycle_id,
                 len(result.symbols_scanned),
                 len(result.opportunities),
@@ -38,7 +39,7 @@ async def _cycle_loop() -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("WS-only automatic scan failed")
+            log.exception("Hybrid automatic scan failed")
         await asyncio.sleep(interval)
 
 
@@ -59,14 +60,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="XORA Chart AI",
-    description="WebSocket-only reference-chart gated scanner",
-    version="0.5.0",
+    description="REST-history + WebSocket-live reference-chart gated scanner",
+    version="0.6.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
 )
 
-# The production application transport is WebSocket-only. No REST data router
-# is mounted. Static UI is served separately by Nginx.
+# Browser/application RPC remains WebSocket-only.  Binance historical market data
+# is fetched separately from Binance REST; no REST application router is mounted.
 app.include_router(ws_router)

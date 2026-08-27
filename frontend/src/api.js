@@ -1,5 +1,8 @@
 const explicit = (import.meta.env.VITE_WS_BASE || '').replace(/\/+$/, '')
 const WS_URL = explicit || `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+const BINANCE_FUTURES_REST_BASE = (
+  import.meta.env.VITE_BINANCE_FUTURES_REST_BASE || 'https://fapi.binance.com/fapi/v1'
+).replace(/\/+$/, '')
 
 let socket = null
 let connectPromise = null
@@ -80,6 +83,48 @@ async function rpc(action, payload = {}, timeoutMs = 190000) {
   })
 }
 
+function normalizeSymbol(raw) {
+  const compact = String(raw || '').trim().toUpperCase().replace(/[\/\-\s]/g, '')
+  if (!compact) throw new Error('Enter a coin symbol')
+  return compact.endsWith('USDT') ? compact : `${compact}USDT`
+}
+
+async function fetchFuturesHistory(rawSymbol, limit = 100) {
+  const symbol = normalizeSymbol(rawSymbol)
+  const params = new URLSearchParams({
+    symbol,
+    interval: '1m',
+    // request one extra because Binance normally includes the forming candle
+    limit: String(Math.min(1000, Math.max(21, Number(limit) + 1))),
+  })
+  const response = await fetch(`${BINANCE_FUTURES_REST_BASE}/klines?${params.toString()}`, {
+    method: 'GET',
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+  if (!response.ok) {
+    const body = (await response.text()).slice(0, 180)
+    throw new Error(`Binance history HTTP ${response.status}${body ? ` · ${body}` : ''}`)
+  }
+  const rows = await response.json()
+  if (!Array.isArray(rows) || rows.length < 20) {
+    throw new Error(`Binance returned only ${Array.isArray(rows) ? rows.length : 0} history rows for ${symbol}`)
+  }
+  return rows
+}
+
+async function mapLimit(items, limit, worker) {
+  const queue = [...items]
+  const count = Math.max(1, Math.min(limit, queue.length || 1))
+  const runners = Array.from({ length: count }, async () => {
+    while (queue.length) {
+      const item = queue.shift()
+      await worker(item)
+    }
+  })
+  await Promise.all(runners)
+}
+
 export function fetchPatterns({ direction, type } = {}) {
   return rpc('patterns.list', { direction, type })
 }
@@ -93,16 +138,53 @@ export function fetchOpportunities(limit = 30) {
 }
 
 export async function runCycle() {
-  const result = await rpc('cycle.run')
+  const plan = await rpc('cycle.plan')
+  const coins = Array.isArray(plan?.coins) ? plan.coins.slice(0, 20) : []
+  if (!coins.length) throw new Error('No live WebSocket coins are available for scanning yet')
+
+  const histories = {}
+  const clientHistoryErrors = []
+
+  // Binance public history comes directly from the browser.  This avoids the
+  // production GCP egress location returning HTTP 451 while keeping live data
+  // on XORA's Binance WebSocket feed.
+  await mapLimit(coins, 4, async (coin) => {
+    const symbol = normalizeSymbol(coin?.symbol)
+    try {
+      histories[symbol] = await fetchFuturesHistory(symbol, 100)
+    } catch (err) {
+      clientHistoryErrors.push(`${symbol}: ${err.message || err}`)
+    }
+  })
+
+  const result = await rpc('cycle.run', { coins, histories })
   const errors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : []
+
+  // Missing browser histories are allowed to use the backend REST/recovery path.
+  // Surface them only if the backend also could not produce usable windows.
   if (errors.length) {
-    throw new Error(errors.join(' · '))
+    const detail = [...errors, ...clientHistoryErrors].join(' · ')
+    throw new Error(detail)
   }
   return result
 }
 
-export function analyzeSymbol(symbol) {
-  return rpc('analyze', { symbol })
+export async function analyzeSymbol(symbol) {
+  const normalized = normalizeSymbol(symbol)
+  try {
+    const history = await fetchFuturesHistory(normalized, 100)
+    return await rpc('analyze', { symbol: normalized, history })
+  } catch (clientErr) {
+    // Local/self-hosted backends may reach Binance REST directly; production GCP
+    // may instead recover from persisted WS candles if browser REST is unavailable.
+    try {
+      return await rpc('analyze', { symbol: normalized })
+    } catch (backendErr) {
+      throw new Error(
+        `Historical data unavailable for ${normalized}: ${clientErr.message || clientErr} · ${backendErr.message || backendErr}`
+      )
+    }
+  }
 }
 
 export function fetchSettings() {
@@ -137,4 +219,4 @@ export function closeTrade(posId, exitPrice) {
   })
 }
 
-export { WS_URL as API_BASE }
+export { WS_URL as API_BASE, BINANCE_FUTURES_REST_BASE }

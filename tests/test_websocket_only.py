@@ -10,30 +10,34 @@ def text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_binance_market_service_has_no_rest_client_or_endpoint():
+def test_live_binance_service_remains_websocket_only():
     source = text("src/xora_chart/services/binance_ws.py")
-    forbidden = [
-        "import httpx",
-        "https://fapi.binance.com",
-        "/fapi/v1/",
-        "AsyncClient(",
-        "_http_get",
-        "_seed_klines_http",
-        "_seed_tickers_http",
-    ]
-    for marker in forbidden:
-        assert marker not in source, f"REST market-data path returned: {marker}"
+    assert "import httpx" not in source
+    assert "https://fapi.binance.com/fapi/v1" not in source
     assert "wss://ws-fapi.binance.com/ws-fapi/v1" in source
+    assert "wss://fstream.binance.com" in source
 
 
-def test_frontend_uses_websocket_not_fetch_for_backend_data():
+def test_historical_service_uses_binance_futures_rest_klines():
+    source = text("src/xora_chart/services/binance_rest.py")
+    assert "import httpx" in source
+    assert "https://fapi.binance.com" in source
+    assert "/fapi/v1/klines" in source
+    assert "window_from_rows" in source
+
+
+def test_frontend_keeps_application_rpc_on_websocket_and_rest_only_for_history():
     source = text("frontend/src/api.js")
     assert "new WebSocket(" in source
-    assert "fetch(" not in source
+    assert "rpc('analyze'" in source
+    assert "rpc('cycle.run'" in source
+    assert "fapi.binance.com/fapi/v1" in source
+    assert "/klines?" in source
+    assert "fetch(" in source
     assert "/api/v1" not in source
 
 
-def test_production_has_no_rest_worker():
+def test_production_has_no_rest_application_worker():
     compose = text("docker-compose.prod.yml")
     assert "worker:" not in compose
     assert "XORA_API_BASE" not in compose

@@ -1,8 +1,8 @@
-"""WebSocket-only application transport for the XORA dashboard.
+"""WebSocket application transport for the XORA dashboard.
 
-No market/application data is fetched through REST. The browser sends small
-RPC messages over one persistent WebSocket connection and receives JSON
-responses on the same connection.
+Application RPC remains WebSocket-only.  Market-data transport is hybrid:
+historical Binance Futures klines may arrive from REST (backend or browser);
+live prices/order-book state come from Binance WebSockets.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from xora_chart.application import discovery
 from xora_chart.application.live import enrich_position, last_price
 from xora_chart.application.pipeline import run_cycle
 from xora_chart.application.reference_visual import library_status
@@ -57,9 +58,11 @@ def _health() -> dict[str, Any]:
     return {
         "status": "ok" if market_live and refs_ready else "degraded",
         "service": "xora-chart-ai",
-        "transport": "websocket-only",
-        "market_data": "binance-websocket-only",
-        "rest_market_data": False,
+        "transport": "websocket-rpc",
+        "market_data": "binance-rest-history-websocket-live",
+        "rest_market_data": True,
+        "history_data": "binance-futures-rest",
+        "live_market_data": "binance-futures-websocket",
         "market_live": market_live,
         "ws_connected": connected,
         "ws_tickers": tickers,
@@ -118,10 +121,19 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
     if action == "settings.update":
         patch = {k: v for k, v in payload.items() if k in {"auto_trade", "trade_mode"}}
         return store.update_settings(patch)
+    if action == "cycle.plan":
+        coins = (await discovery.run_discovery())[:20]
+        return {"coins": coins, "count": len(coins)}
     if action == "cycle.run":
-        return await run_cycle()
+        return await run_cycle(
+            histories=payload.get("histories") or None,
+            coins_override=payload.get("coins") or None,
+        )
     if action == "analyze":
-        return await analyze_symbol(str(payload.get("symbol") or ""))
+        return await analyze_symbol(
+            str(payload.get("symbol") or ""),
+            history_rows=payload.get("history") or None,
+        )
     if action == "quote":
         symbol = str(payload.get("symbol") or "").upper()
         px = last_price(symbol)
