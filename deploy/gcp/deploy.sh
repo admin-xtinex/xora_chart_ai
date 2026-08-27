@@ -35,7 +35,7 @@ docker compose "${COMPOSE_ARGS[@]}" ps
 
 echo
 echo "WebSocket health check:"
-for i in {1..12}; do
+for i in {1..18}; do
   if docker compose "${COMPOSE_ARGS[@]}" exec -T backend \
     python - <<'PY'
 import asyncio
@@ -49,6 +49,14 @@ async def main():
         await ws.send(json.dumps({"id": "deploy-health", "action": "health", "payload": {}}))
         msg = json.loads(await ws.recv())
         data = msg.get("data") or {}
+        ticker_count = int(data.get("ws_tickers") or 0)
+        last_age = data.get("ws_last_message_age_seconds")
+        market_live = (
+            data.get("ws_connected") is True
+            and ticker_count > 0
+            and last_age is not None
+            and float(last_age) < 30.0
+        )
         ok = (
             msg.get("ok") is True
             and data.get("transport") == "websocket-only"
@@ -56,9 +64,15 @@ async def main():
             and data.get("rest_market_data") is False
             and data.get("reference_gate") is True
             and int(data.get("reference_images") or 0) >= 10
+            and market_live
         )
         print(json.dumps(data, indent=2))
         if not ok:
+            print(
+                f"Market data is not healthy: connected={data.get('ws_connected')} "
+                f"tickers={ticker_count} last_age={last_age}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
 asyncio.run(main())
@@ -70,14 +84,15 @@ PY
       HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
     fi
     if [[ "$HOME_CODE" == "200" ]]; then
-      echo "WebSocket backend and frontend are healthy."
+      echo "Backend market WebSocket and frontend are healthy."
       exit 0
     fi
   fi
   sleep 5
 done
 
-echo "WebSocket health check did not become ready. Inspect logs with:"
+echo "Production health check failed: frontend may be serving, but live market data is not usable."
+echo "Inspect logs with:"
 printf 'docker compose'
 printf ' %q' "${COMPOSE_ARGS[@]}"
 echo ' logs --tail=200'
