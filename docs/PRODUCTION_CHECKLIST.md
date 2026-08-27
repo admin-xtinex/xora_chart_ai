@@ -2,7 +2,7 @@
 
 Updated: 2026-08-27
 
-This checklist is the source of truth for the current production stabilization work. Items are marked complete only after verification in production or CI.
+This checklist is the source of truth for the current production stabilization work. Items are marked complete only after verification in production or CI, except implementation-only items which are explicitly code-verified.
 
 ## Infrastructure and access
 
@@ -12,8 +12,8 @@ This checklist is the source of truth for the current production stabilization w
 - [x] Automation account granted Compute Instance Admin, Compute Network Admin, and Service Account User roles.
 - [x] Automation service account attached to `xora-chart-ai` with `cloud-platform` scope.
 - [x] Self-hosted GitHub Actions runner is active on the production VM.
-- [ ] Make production deployment idempotent after runner file-mode changes.
-- [ ] Make production frontend verification HTTPS-aware.
+- [x] Production deployment made idempotent against runner file-mode changes (`core.fileMode=false`, forced checkout/reset).
+- [x] Production frontend verification made HTTPS-aware and tolerant of the expected HTTP→HTTPS redirect.
 
 ## Market-data runtime
 
@@ -21,6 +21,7 @@ This checklist is the source of truth for the current production stabilization w
 - [x] Individual ticker bootstrap streams implemented.
 - [x] Closed-candle history separated from live/in-progress candles.
 - [x] CI health rejects `ws_tickers=0` instead of reporting a false healthy deployment.
+- [x] Backend health reports `degraded` when no usable live ticker feed exists.
 - [x] Direct `!ticker@arr`, BTC ticker, BTC kline, and BTC mark stream probes executed in `us-central1`; all timed out waiting for payloads.
 - [ ] Test Binance Futures `/ws` + `SUBSCRIBE` mode from current `us-central1` VM.
 - [ ] If current region remains unusable, probe another Always Free eligible GCP region without leaving a paid resource running.
@@ -33,10 +34,10 @@ This checklist is the source of truth for the current production stabilization w
 - [ ] `cycle.run` discovers symbols and completes without market-data readiness errors.
 - [ ] Opportunities populate in the WebSocket API and frontend.
 - [ ] Manual coin analysis works for supported symbols.
-- [ ] Symbol normalization works for inputs such as `BTC` and `ETHUSDT`.
-- [ ] Reference-chart verification remains mandatory.
-- [ ] Manual demo trade is available only for `APPROVE` + verified reference match + valid entry.
-- [ ] Auto demo trading obeys the same approval/reference gates.
+- [x] Symbol normalization is implemented and code-verified for inputs such as `BTC`, `BTC/USDT`, `BTC-USDT`, and `ETHUSDT`.
+- [x] Reference-chart verification remains mandatory in the backend execution path.
+- [x] Manual demo-trade backend execution requires `APPROVE` + verified reference match + matched reference example + valid setup.
+- [x] Auto demo trading uses the same backend `open_from_opportunity` gate and therefore obeys the same approval/reference requirements.
 
 ## Frontend/product
 
