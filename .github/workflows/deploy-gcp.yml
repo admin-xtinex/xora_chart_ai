@@ -39,8 +39,9 @@ jobs:
           fi
 
           cd "$DEPLOY_DIR"
+          git config core.fileMode false
           git fetch --prune origin main
-          git checkout -B main origin/main
+          git checkout -f main
           git reset --hard origin/main
 
           if [[ ! -f .env.production ]]; then
@@ -67,10 +68,11 @@ jobs:
           import websockets
 
           STREAMS = {
-              "all_tickers": "wss://fstream.binance.com/ws/!ticker@arr",
-              "btc_ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
-              "btc_kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
-              "btc_mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+              "all_tickers_direct": "wss://fstream.binance.com/ws/!ticker@arr",
+              "btc_ticker_direct": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "btc_kline_direct": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
+              "btc_mark_direct": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+              "btc_ticker_combined": "wss://fstream.binance.com/stream?streams=btcusdt@ticker",
           }
 
           async def probe(name, url):
@@ -82,9 +84,37 @@ jobs:
               except Exception as exc:
                   print("BINANCE_WS_ERROR", name, type(exc).__name__, repr(exc))
 
+          async def probe_subscribe():
+              name = "btc_subscribe_rpc"
+              try:
+                  async with websockets.connect(
+                      "wss://fstream.binance.com/ws",
+                      open_timeout=10,
+                      close_timeout=3,
+                      ping_interval=None,
+                  ) as ws:
+                      await ws.send(json.dumps({
+                          "method": "SUBSCRIBE",
+                          "params": ["btcusdt@ticker", "btcusdt@kline_1m", "btcusdt@markPrice@1s"],
+                          "id": 1,
+                      }))
+                      deadline = asyncio.get_running_loop().time() + 12
+                      while asyncio.get_running_loop().time() < deadline:
+                          raw = await asyncio.wait_for(ws.recv(), timeout=12)
+                          data = json.loads(raw)
+                          if isinstance(data, dict) and data.get("result") is None and data.get("id") == 1:
+                              print("BINANCE_WS_SUBSCRIBED", name, data)
+                              continue
+                          print("BINANCE_WS_OK", name, type(data).__name__, str(data)[:300])
+                          return
+                      raise asyncio.TimeoutError()
+              except Exception as exc:
+                  print("BINANCE_WS_ERROR", name, type(exc).__name__, repr(exc))
+
           async def main():
               for name, url in STREAMS.items():
                   await probe(name, url)
+              await probe_subscribe()
 
           asyncio.run(main())
           PY
@@ -96,12 +126,13 @@ jobs:
         run: |
           set -euo pipefail
           for i in {1..18}; do
-            HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
-            if [[ "$HOME_CODE" == "200" ]]; then
-              echo "Frontend HTTP 200 on self-hosted production VM."
+            HTTP_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+            HTTPS_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
+            if [[ "$HTTPS_CODE" == "200" || "$HTTP_CODE" == "200" || "$HTTP_CODE" == "301" || "$HTTP_CODE" == "302" ]]; then
+              echo "Frontend reachable (HTTP=${HTTP_CODE:-none}, HTTPS=${HTTPS_CODE:-none})."
               exit 0
             fi
             sleep 5
           done
-          echo "Local frontend verification failed. Last code: ${HOME_CODE:-<none>}" >&2
+          echo "Local frontend verification failed. HTTP=${HTTP_CODE:-none} HTTPS=${HTTPS_CODE:-none}" >&2
           exit 1
