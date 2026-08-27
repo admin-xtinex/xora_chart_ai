@@ -1,31 +1,21 @@
-name: XORA tests
+name: XORA tests (manual self-hosted)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "config/**"
-      - "frontend/**"
-      - "Dockerfile*"
-      - "docker-compose*.yml"
-      - "deploy/gcp/**"
-      - "pyproject.toml"
-      - ".github/workflows/test.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: xora-gcp-tests
+  group: xora-self-hosted-vm
   cancel-in-progress: true
 
 jobs:
   test:
+    name: Test on self-hosted VM
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 25
+
     steps:
       - name: Repair workspace ownership
         shell: bash
@@ -35,9 +25,22 @@ jobs:
             sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE" || true
           fi
 
-      - uses: actions/checkout@v4
+      - name: Checkout commit
+        uses: actions/checkout@v4
         with:
           clean: true
+          fetch-depth: 1
+
+      - name: Verify self-hosted VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner: ${RUNNER_NAME:-unknown}"
+          echo "Host: $(hostname)"
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Docker is not installed on the self-hosted VM." >&2
+            exit 1
+          fi
 
       - name: Backend compile and tests
         shell: bash
