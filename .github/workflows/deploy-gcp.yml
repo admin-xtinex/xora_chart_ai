@@ -52,32 +52,46 @@ jobs:
           sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
       - name: Diagnose Binance WebSocket
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           echo "=== Backend recent WebSocket logs ==="
-          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake' | tail -n 120 || true
+          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker' | tail -n 160 || true
 
-          echo "=== Direct VM Binance Futures WebSocket probe ==="
+          echo "=== Direct VM Binance Futures WebSocket probes ==="
           docker run --rm python:3.12-slim sh -lc '
             pip install -q websockets && python - <<"PY"
           import asyncio
+          import json
           import websockets
 
-          async def main():
-              url = "wss://fstream.binance.com/ws/!ticker@arr"
+          STREAMS = {
+              "all_tickers": "wss://fstream.binance.com/ws/!ticker@arr",
+              "btc_ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "btc_kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
+              "btc_mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+          }
+
+          async def probe(name, url):
               try:
-                  async with websockets.connect(url, open_timeout=12, close_timeout=3) as ws:
-                      msg = await asyncio.wait_for(ws.recv(), timeout=12)
-                      print("BINANCE_WS_OK", len(msg))
+                  async with websockets.connect(url, open_timeout=10, close_timeout=3, ping_interval=None) as ws:
+                      raw = await asyncio.wait_for(ws.recv(), timeout=10)
+                      data = json.loads(raw)
+                      print("BINANCE_WS_OK", name, type(data).__name__, str(data)[:300])
               except Exception as exc:
-                  print("BINANCE_WS_ERROR", type(exc).__name__, repr(exc))
+                  print("BINANCE_WS_ERROR", name, type(exc).__name__, repr(exc))
+
+          async def main():
+              for name, url in STREAMS.items():
+                  await probe(name, url)
 
           asyncio.run(main())
           PY
           '
 
       - name: Verify local frontend
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
