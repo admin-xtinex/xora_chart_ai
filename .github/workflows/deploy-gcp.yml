@@ -20,7 +20,7 @@ jobs:
     name: Deploy production
     runs-on: [self-hosted, linux, x64]
     environment: production
-    timeout-minutes: 40
+    timeout-minutes: 30
 
     steps:
       - name: Deploy directly on production VM
@@ -52,101 +52,29 @@ jobs:
           ./deploy/gcp/deploy.sh
           sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
 
-      - name: Diagnose Binance WebSocket
+      - name: Diagnose market WebSockets
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           echo "=== Backend recent WebSocket logs ==="
-          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker' | tail -n 160 || true
+          docker logs --since 15m xora_chart_api 2>&1 | grep -Ei 'websocket|WS session|fstream|binance|451|403|timeout|SSL|handshake|ticker|kline|depth|mark' | tail -n 180 || true
 
-          echo "=== Direct VM Binance Futures WebSocket probes ==="
+          echo "=== Current VM WebSocket controls ==="
           docker run --rm python:3.12-slim sh -lc '
             pip install -q websockets && python - <<"PY"
           import asyncio
           import json
           import websockets
 
-          STREAMS = {
-              "all_tickers_direct": "wss://fstream.binance.com/ws/!ticker@arr",
-              "btc_ticker_direct": "wss://fstream.binance.com/ws/btcusdt@ticker",
-              "btc_kline_direct": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
-              "btc_mark_direct": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
-              "btc_ticker_combined": "wss://fstream.binance.com/stream?streams=btcusdt@ticker",
-          }
-
-          async def probe(name, url):
-              try:
-                  async with websockets.connect(url, open_timeout=10, close_timeout=3, ping_interval=None) as ws:
-                      raw = await asyncio.wait_for(ws.recv(), timeout=10)
-                      data = json.loads(raw)
-                      print("BINANCE_WS_OK", name, type(data).__name__, str(data)[:300])
-              except Exception as exc:
-                  print("BINANCE_WS_ERROR", name, type(exc).__name__, repr(exc))
-
-          async def probe_subscribe():
-              name = "btc_subscribe_rpc"
-              try:
-                  async with websockets.connect(
-                      "wss://fstream.binance.com/ws",
-                      open_timeout=10,
-                      close_timeout=3,
-                      ping_interval=None,
-                  ) as ws:
-                      await ws.send(json.dumps({
-                          "method": "SUBSCRIBE",
-                          "params": ["btcusdt@ticker", "btcusdt@kline_1m", "btcusdt@markPrice@1s"],
-                          "id": 1,
-                      }))
-                      deadline = asyncio.get_running_loop().time() + 12
-                      while asyncio.get_running_loop().time() < deadline:
-                          raw = await asyncio.wait_for(ws.recv(), timeout=12)
-                          data = json.loads(raw)
-                          if isinstance(data, dict) and data.get("result") is None and data.get("id") == 1:
-                              print("BINANCE_WS_SUBSCRIBED", name, data)
-                              continue
-                          print("BINANCE_WS_OK", name, type(data).__name__, str(data)[:300])
-                          return
-                      raise asyncio.TimeoutError()
-              except Exception as exc:
-                  print("BINANCE_WS_ERROR", name, type(exc).__name__, repr(exc))
-
-          async def main():
-              for name, url in STREAMS.items():
-                  await probe(name, url)
-              await probe_subscribe()
-
-          asyncio.run(main())
-          PY
-          '
-
-      - name: Probe Always Free regions when current feed is blocked
-        if: always()
-        shell: bash
-        run: |
-          set -uo pipefail
-
-          PROJECT="xtinex-trading"
-          PROBE_PREFIX="xora-ws-probe"
-
-          cat > /tmp/xora-region-probe.sh <<'SCRIPT'
-          #!/bin/bash
-          exec > >(tee /dev/ttyS0) 2>&1
-          set -u
-          export DEBIAN_FRONTEND=noninteractive
-          echo "XORA_PROBE_START $(date -Is)"
-          apt-get update -qq
-          apt-get install -y -qq python3-pip >/dev/null
-          python3 -m pip install --break-system-packages -q websockets
-          python3 - <<'PY'
-          import asyncio
-          import json
-          import websockets
-
-          STREAMS = {
-              "ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
-              "kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
-              "mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+          PROBES = {
+              "futures_ticker": "wss://fstream.binance.com/ws/btcusdt@ticker",
+              "futures_kline": "wss://fstream.binance.com/ws/btcusdt@kline_1m",
+              "futures_mark": "wss://fstream.binance.com/ws/btcusdt@markPrice@1s",
+              "futures_depth": "wss://fstream.binance.com/ws/btcusdt@depth20@100ms",
+              "futures_combined": "wss://fstream.binance.com/stream?streams=btcusdt@ticker/btcusdt@kline_1m/btcusdt@depth20@100ms/btcusdt@markPrice@1s",
+              "spot_ticker_443": "wss://stream.binance.com:443/ws/btcusdt@ticker",
+              "spot_ticker_9443": "wss://stream.binance.com:9443/ws/btcusdt@ticker",
           }
 
           async def probe(name, url):
@@ -158,81 +86,78 @@ jobs:
                       ping_interval=None,
                   ) as ws:
                       raw = await asyncio.wait_for(ws.recv(), timeout=12)
-                      data = json.loads(raw)
-                      print("XORA_WS_OK", name, type(data).__name__, str(data)[:180])
+                      try:
+                          data = json.loads(raw)
+                          event = data.get("e") if isinstance(data, dict) else None
+                          stream = data.get("stream") if isinstance(data, dict) else None
+                          print("WS_CONTROL_OK", name, "event=", event, "stream=", stream, "bytes=", len(raw))
+                      except Exception:
+                          print("WS_CONTROL_OK", name, "bytes=", len(raw))
                       return True
               except Exception as exc:
-                  print("XORA_WS_ERROR", name, type(exc).__name__, repr(exc))
+                  print("WS_CONTROL_ERROR", name, type(exc).__name__, repr(exc))
+                  return False
+
+          async def subscribe_probe():
+              name = "futures_subscribe_rpc"
+              try:
+                  async with websockets.connect(
+                      "wss://fstream.binance.com/ws",
+                      open_timeout=10,
+                      close_timeout=3,
+                      ping_interval=None,
+                  ) as ws:
+                      await ws.send(json.dumps({
+                          "method": "SUBSCRIBE",
+                          "params": [
+                              "btcusdt@ticker",
+                              "btcusdt@kline_1m",
+                              "btcusdt@depth20@100ms",
+                              "btcusdt@markPrice@1s",
+                          ],
+                          "id": 1,
+                      }))
+                      for _ in range(4):
+                          raw = await asyncio.wait_for(ws.recv(), timeout=12)
+                          data = json.loads(raw)
+                          if isinstance(data, dict) and data.get("id") == 1:
+                              print("WS_CONTROL_ACK", name, data)
+                              continue
+                          print("WS_CONTROL_OK", name, "event=", data.get("e"), "bytes=", len(raw))
+                          return True
+                      return False
+              except Exception as exc:
+                  print("WS_CONTROL_ERROR", name, type(exc).__name__, repr(exc))
                   return False
 
           async def main():
-              results = await asyncio.gather(*(probe(name, url) for name, url in STREAMS.items()))
-              print("XORA_PROBE_VIABLE" if all(results) else "XORA_PROBE_BLOCKED")
+              for name, url in PROBES.items():
+                  await probe(name, url)
+              await subscribe_probe()
 
           asyncio.run(main())
           PY
-          echo "XORA_PROBE_DONE $(date -Is)"
-          SCRIPT
-          chmod +x /tmp/xora-region-probe.sh
+          '
 
-          probe_zone() {
-            local zone="$1"
-            local suffix="${zone//-/}"
-            local name="${PROBE_PREFIX}-${suffix}"
-            local output=""
+      - name: Report XORA WebSocket telemetry
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec xora_chart_api python - <<'PY'
+          import asyncio
+          import json
+          import websockets
 
-            echo "=== Probe ${zone} ==="
-            gcloud compute instances delete "$name" --zone="$zone" --project="$PROJECT" --quiet >/dev/null 2>&1 || true
+          async def main():
+              async with websockets.connect("ws://127.0.0.1:8030/ws", open_timeout=5) as ws:
+                  await ws.recv()
+                  await ws.send(json.dumps({"id": "telemetry", "action": "health", "payload": {}}))
+                  msg = json.loads(await ws.recv())
+                  print(json.dumps(msg.get("data") or {}, indent=2))
 
-            if ! gcloud compute instances create "$name" \
-              --project="$PROJECT" \
-              --zone="$zone" \
-              --machine-type=e2-micro \
-              --image-family=debian-12 \
-              --image-project=debian-cloud \
-              --boot-disk-size=10GB \
-              --boot-disk-type=pd-standard \
-              --network=default \
-              --network-tier=STANDARD \
-              --no-service-account \
-              --no-scopes \
-              --metadata=serial-port-enable=TRUE \
-              --metadata-from-file=startup-script=/tmp/xora-region-probe.sh \
-              --quiet; then
-              echo "XORA_REGION_CREATE_ERROR ${zone}"
-              return 2
-            fi
-
-            for _ in $(seq 1 48); do
-              output="$(gcloud compute instances get-serial-port-output "$name" --zone="$zone" --project="$PROJECT" 2>/dev/null || true)"
-              if grep -q "XORA_PROBE_DONE" <<<"$output"; then
-                break
-              fi
-              sleep 5
-            done
-
-            echo "$output" | grep -E 'XORA_(WS_|PROBE_)' || true
-            local rc=1
-            if grep -q "XORA_PROBE_VIABLE" <<<"$output"; then
-              rc=0
-            fi
-
-            gcloud compute instances delete "$name" --zone="$zone" --project="$PROJECT" --quiet || true
-            return "$rc"
-          }
-
-          SELECTED_ZONE=""
-          if probe_zone "us-west1-b"; then
-            SELECTED_ZONE="us-west1-b"
-          elif probe_zone "us-east1-b"; then
-            SELECTED_ZONE="us-east1-b"
-          fi
-
-          if [[ -n "$SELECTED_ZONE" ]]; then
-            echo "XORA_SELECTED_FREE_TIER_ZONE=$SELECTED_ZONE"
-          else
-            echo "XORA_NO_VIABLE_FREE_TIER_ZONE"
-          fi
+          asyncio.run(main())
+          PY
 
       - name: Verify local frontend
         if: always()
