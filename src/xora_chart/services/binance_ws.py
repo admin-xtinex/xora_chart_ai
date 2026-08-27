@@ -1,12 +1,10 @@
 """Binance Futures market data — WebSocket only.
 
 Hard invariant: this module never calls Binance REST/HTTP endpoints.
-All market observations used by XORA originate from WebSocket streams:
-  - !ticker@arr
-  - <symbol>@kline_1m
-  - <symbol>@depth20@100ms
-  - <symbol>@markPrice@1s
+All market observations used by XORA originate from WebSocket streams.
 
+The hub uses a liquid USDT bootstrap universe so discovery doesn't depend on
+Binance's all-market ticker stream being available from a particular network.
 Closed candles are persisted locally so a restart can reuse observations that
 were originally received over WebSocket. No HTTP history bootstrap exists.
 """
@@ -33,16 +31,29 @@ MAX_CANDLES = 120
 MIN_CANDLES = 20
 STATE_PATH = Path(os.getenv("XORA_WS_STATE_PATH", "/app/state/ws_market.json"))
 
+# WS-only bootstrap universe. These are subscription seeds, not trading signals.
+# Discovery still ranks symbols using live ticker data received from Binance.
+BOOTSTRAP_SYMBOLS = (
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+    "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT", "BCHUSDT", "DOTUSDT",
+    "TRXUSDT", "UNIUSDT", "SUIUSDT", "APTUSDT", "NEARUSDT", "ARBUSDT",
+    "OPUSDT", "AAVEUSDT", "FILUSDT", "ETCUSDT", "ATOMUSDT", "INJUSDT",
+    "SEIUSDT", "TIAUSDT", "WIFUSDT", "PEPEUSDT", "1000SHIBUSDT", "ENAUSDT",
+)
+
 
 class BinanceWSHub:
     _instance: "BinanceWSHub | None" = None
 
     def __init__(self) -> None:
         self._tickers: dict[str, dict[str, Any]] = {}
+        # _candles contains CLOSED candles only. In-progress candles live in
+        # _live_candles and are never used for strategy history/readiness.
         self._candles: dict[str, deque[Candle]] = defaultdict(lambda: deque(maxlen=MAX_CANDLES))
+        self._live_candles: dict[str, Candle] = {}
         self._books: dict[str, dict[str, Any]] = {}
         self._mark: dict[str, dict[str, Any]] = {}
-        self._desired_symbols: set[str] = set()
+        self._desired_symbols: set[str] = set(BOOTSTRAP_SYMBOLS)
         self._watchlist_version = 0
         self._task: asyncio.Task | None = None
         self._running = False
@@ -70,7 +81,8 @@ class BinanceWSHub:
             self._task.cancel()
 
     def set_watchlist(self, symbols: list[str]) -> None:
-        new = {s.upper() for s in symbols if s}
+        requested = {s.upper() for s in symbols if s}
+        new = set(BOOTSTRAP_SYMBOLS) | requested
         if new != self._desired_symbols:
             self._desired_symbols = new
             self._watchlist_version += 1
@@ -175,10 +187,13 @@ class BinanceWSHub:
         log.info("Binance WS-only hub stopped")
 
     async def _session(self) -> None:
+        # Keep the all-market stream as an opportunistic source, but never rely
+        # on it. Individual ticker streams provide deterministic bootstrap data.
         streams = ["!ticker@arr"]
-        symbols = sorted(self._desired_symbols)[:30]
+        symbols = sorted(self._desired_symbols)[:40]
         for sym in symbols:
             s = sym.lower()
+            streams.append(f"{s}@ticker")
             streams.append(f"{s}@kline_1m")
             streams.append(f"{s}@depth20@100ms")
             streams.append(f"{s}@markPrice@1s")
@@ -212,9 +227,9 @@ class BinanceWSHub:
                 if stream == "!ticker@arr" or isinstance(data, list):
                     if isinstance(data, list):
                         for t in data:
-                            sym = (t.get("s") or "").upper()
-                            if sym:
-                                self._tickers[sym] = t
+                            self._store_ticker(t)
+                elif stream.endswith("@ticker"):
+                    self._store_ticker(data)
                 elif "@kline_" in stream:
                     self._handle_kline(data)
                 elif "@depth" in stream:
@@ -234,6 +249,11 @@ class BinanceWSHub:
                         }
         self._connected = False
 
+    def _store_ticker(self, ticker: dict[str, Any]) -> None:
+        sym = (ticker.get("s") or "").upper()
+        if sym:
+            self._tickers[sym] = ticker
+
     def _handle_kline(self, data: dict) -> None:
         k = data.get("k") or {}
         sym = (data.get("s") or k.get("s") or "").upper()
@@ -252,17 +272,17 @@ class BinanceWSHub:
         except (TypeError, ValueError):
             return
 
+        if not bool(k.get("x")):
+            self._live_candles[sym] = candle
+            return
+
+        self._live_candles.pop(sym, None)
         buf = self._candles[sym]
-        new_bar = not buf or buf[-1].open_time != candle.open_time
-        if not new_bar:
+        if buf and buf[-1].open_time == candle.open_time:
             buf[-1] = candle
         else:
             buf.append(candle)
-
-        # Persist only when Binance marks a candle closed. This keeps the local
-        # history entirely derived from WebSocket observations.
-        if bool(k.get("x")):
-            self._save_ws_state()
+        self._save_ws_state()
 
     def _load_ws_state(self) -> None:
         try:
@@ -296,7 +316,7 @@ class BinanceWSHub:
 
 
 async def ensure_hub() -> BinanceWSHub:
-    """Start the WebSocket hub and briefly wait for its first ticker messages."""
+    """Start the WebSocket hub and briefly wait for initial ticker messages."""
     hub = BinanceWSHub.instance()
     await hub.ensure_started()
     for _ in range(50):
@@ -311,7 +331,7 @@ async def discover_coins(**kwargs) -> list[DiscoveredCoin]:
     coins = hub.discover_coins(**kwargs)
     if coins:
         hub.set_watchlist([c.symbol for c in coins])
-    log.info("WS-only discovery returned %d coins", len(coins))
+    log.info("WS-only discovery returned %d coins from %d live tickers", len(coins), hub.ticker_count())
     return coins
 
 
@@ -323,7 +343,7 @@ async def fetch_klines(symbol: str, interval: str = "1m", limit: int = 100) -> C
     if not window:
         count = hub.candle_count(sym)
         raise RuntimeError(
-            f"WebSocket candle history not ready for {sym}: {count}/{MIN_CANDLES} bars collected"
+            f"WebSocket candle history not ready for {sym}: {count}/{MIN_CANDLES} closed bars collected"
         )
     return window
 
