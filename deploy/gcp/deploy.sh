@@ -18,7 +18,10 @@ TLS_CERT="/etc/letsencrypt/live/xora.xtinex.com/fullchain.pem"
 TLS_KEY="/etc/letsencrypt/live/xora.xtinex.com/privkey.pem"
 TLS_ENABLED=false
 
-if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
+# The self-hosted runner user cannot normally traverse /etc/letsencrypt/live,
+# while Docker can still mount it through the daemon. Use sudo only for the
+# existence check so CI does not incorrectly redeploy the site as HTTP-only.
+if sudo test -f "$TLS_CERT" && sudo test -f "$TLS_KEY"; then
   COMPOSE_ARGS+=(-f docker-compose.tls.yml)
   TLS_ENABLED=true
   echo "TLS certificate detected; enabling HTTPS for xora.xtinex.com."
@@ -79,7 +82,8 @@ asyncio.run(main())
 PY
   then
     if [[ "$TLS_ENABLED" == true ]]; then
-      HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 https://127.0.0.1/ --resolve xora.xtinex.com:443:127.0.0.1 -H 'Host: xora.xtinex.com' || true)"
+      HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+        --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
     else
       HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
     fi
