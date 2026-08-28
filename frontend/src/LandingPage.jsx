@@ -49,8 +49,8 @@ function ChartPreview() {
           <filter id="chartGlow"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
         {[40,80,120,160].map((y) => <line key={y} x1="0" y1={y} x2="350" y2={y} className="chart-grid-line"/>)}
-        {[50,100,150,200,250,300].map((x) => <line key={x} x1={x} y1="0" x2={x} y2="190" className="chart-grid-line"/>)}
-        {candles.map(([x,o,c,l], i) => {
+        {[50,100,150,200,250,300].map((x) => <line key={x} x1={x} y1="0" y2="190" className="chart-grid-line"/>)}
+        {candles.map(([x,o,c], i) => {
           const up = c < o
           const hi = Math.max(12, Math.min(o,c)-9)
           const lo = Math.min(178, Math.max(o,c)+12)
@@ -76,8 +76,8 @@ function AppPhone() {
       <div className="phone-notch"/>
       <div className="phone-screen">
         <div className="phone-brand"><span className="mini-xora-icon"/><span>XORA</span><i>AI</i></div>
-        <div className="phone-top-metrics"><div><small>Active Trades</small><strong>2</strong></div><div><small>Open P&amp;L</small><strong className="positive">+$1,245.75</strong></div></div>
-        <div className="phone-signal"><div className="phone-signal-head"><span>AI SIGNAL</span><b>92%</b></div><strong>BTC/USDT</strong><div className="phone-bull">● Bullish <span>High confidence</span></div><button>View signal</button></div>
+        <div className="phone-top-metrics"><div><small>Market Feed</small><strong className="positive">LIVE</strong></div><div><small>Risk Gate</small><strong>ACTIVE</strong></div></div>
+        <div className="phone-signal"><div className="phone-signal-head"><span>AI SIGNAL</span><b>92%</b></div><strong>BTC/USDT</strong><div className="phone-bull">● Bullish <span>High confidence</span></div><button type="button">View signal</button></div>
         <div className="phone-flow">
           {['Discover','Validate','Approve','Execute','Monitor','Review'].map((step,i)=><div key={step}><span>{i<3?'✦':'◇'}</span><small>{step}</small></div>)}
         </div>
@@ -164,7 +164,7 @@ export default function LandingPage() {
                 <AppPhone/>
                 <div className="app-feature-list">{appFeatures.map(([title,copy],i)=><div key={title}><span className="app-feature-icon"><FeatureIcon type={i===3?'shield':i===4?'chart':'spark'}/></span><div><strong>{title}</strong><small>{copy}</small></div></div>)}</div>
               </div>
-              <div className="product-actions"><a className="landing-primary-btn" href="/app/">Open XORA App AI <ArrowIcon/></a><a className="landing-ghost-btn" href="#app-details">Explore App AI</a></div>
+              <div className="product-actions"><a className="landing-primary-btn" href="#app-details">Explore XORA App AI <ArrowIcon/></a><a className="landing-ghost-btn" href="#ecosystem">See ecosystem flow</a></div>
             </article>
           </div>
           <div className="product-bridge" aria-hidden="true"><span className="bridge-line left"/><span className="bridge-core landing-logo-image"/><span className="bridge-line right"/></div>
@@ -184,9 +184,9 @@ export default function LandingPage() {
 
         <section id="features" className="landing-container capability-section">
           <div className="capability-grid">
-            <div><span>20</span><strong>Unique Coins</strong><small>Structured scan universe</small></div>
+            <div><span>20</span><strong>Unique Coins</strong><small>Four non-overlapping scan cohorts</small></div>
             <div><span>10</span><strong>Pattern Guides</strong><small>Visual Knowledge catalog</small></div>
-            <div><span>5 min</span><strong>Refresh Rhythm</strong><small>Configured market review cycle</small></div>
+            <div><span>LIVE</span><strong>Market Feed</strong><small>REST history + WebSocket live data</small></div>
             <div><span>AI</span><strong>Explainable Review</strong><small>Evidence beside the decision</small></div>
             <div><span>RISK</span><strong>Risk-First</strong><small>Guardrails before execution</small></div>
           </div>
@@ -201,7 +201,7 @@ export default function LandingPage() {
 
         <section id="app-details" className="landing-container details-section">
           <div className="detail-panel detail-panel-violet">
-            <div className="detail-copy"><span>XORA APP AI</span><h3>The broader AI-assisted trading lifecycle in your pocket.</h3><p>Signals, Scout/Chasing, active trade monitoring, history, risk controls and analytics form the mobile workspace around XORA's server-owned trading intelligence.</p><a href="/app/" className="landing-primary-btn">Open App AI <ArrowIcon/></a></div>
+            <div className="detail-copy"><span>XORA APP AI</span><h3>The broader AI-assisted trading lifecycle in your pocket.</h3><p>Signals, Scout/Chasing, active trade monitoring, history, risk controls and analytics form the mobile workspace around XORA's server-owned trading intelligence.</p><a href="#products" className="landing-primary-btn">View App AI showcase <ArrowIcon/></a></div>
             <div className="detail-feature-grid">{appFeatures.slice(0,4).map(([title,copy])=><div key={title}><strong>{title}</strong><small>{copy}</small></div>)}</div>
           </div>
         </section>
@@ -213,7 +213,7 @@ export default function LandingPage() {
 
       <footer className="landing-footer landing-container">
         <div className="footer-brand"><div className="landing-brand"><span className="landing-logo-image"/><div><strong>XORA</strong><small>AI TRADING INTELLIGENCE</small></div></div><p>AI trading intelligence designed to make discovery, analysis and risk decisions easier to understand.</p><small>© 2026 XORA · XTinex</small></div>
-        <div><strong>PRODUCTS</strong><a href="/charts">XORA Charts AI</a><a href="/app/">XORA App AI</a></div>
+        <div><strong>PRODUCTS</strong><a href="/charts">XORA Charts AI</a><a href="#app-details">XORA App AI</a></div>
         <div><strong>PLATFORM</strong><a href="#features">Features</a><a href="#ecosystem">Ecosystem</a><a href="#about">About</a></div>
         <div><strong>RESOURCES</strong><a href="/charts">Knowledge</a><a href="/charts">Analytics</a><a href="/charts">Settings</a></div>
       </footer>

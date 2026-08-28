@@ -35,7 +35,9 @@ class Store:
         self._latest_cycle: CycleResult | None = None
         self._settings: dict[str, Any] = {
             "auto_trade": bool(trade_cfg.get("auto_trade", False)),
-            "trade_mode": str(trade_cfg.get("mode", "demo")),
+            # Chart AI currently has a complete demo execution path only. Keep
+            # persisted UI state honest until a separately reviewed live adapter exists.
+            "trade_mode": "demo",
         }
         self._state_path = Path(os.getenv("XORA_STATE_FILE", "state/xora_state.json"))
         self._io_lock = threading.RLock()
@@ -54,7 +56,11 @@ class Store:
             if not self._state_path.exists():
                 return
             raw = json.loads(self._state_path.read_text(encoding="utf-8"))
-            self._settings.update(raw.get("settings") or {})
+            restored_settings = raw.get("settings") or {}
+            if "auto_trade" in restored_settings:
+                self._settings["auto_trade"] = bool(restored_settings["auto_trade"])
+            # Never resurrect a stale `live` UI setting when no live adapter exists.
+            self._settings["trade_mode"] = "demo"
 
             cycles = [CycleResult.model_validate(x) for x in raw.get("cycles") or []]
             self._cycles = deque(cycles[: self._max_cycles], maxlen=self._max_cycles)
@@ -95,8 +101,11 @@ class Store:
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         if "auto_trade" in patch:
             self._settings["auto_trade"] = bool(patch["auto_trade"])
-        if "trade_mode" in patch and patch["trade_mode"] in ("demo", "live"):
-            self._settings["trade_mode"] = patch["trade_mode"]
+        if "trade_mode" in patch:
+            mode = str(patch["trade_mode"]).lower()
+            if mode != "demo":
+                raise RuntimeError("Live trading is unavailable; trade_mode must remain demo")
+            self._settings["trade_mode"] = "demo"
         self._persist()
         return self.get_settings()
 

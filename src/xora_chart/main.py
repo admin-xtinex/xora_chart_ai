@@ -6,10 +6,11 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
+from xora_chart.api.ops import router as ops_router
 from xora_chart.api.ws import router as ws_router
-from xora_chart.application.pipeline import run_cycle
+from xora_chart.application.cycle_runtime import run_cycle
 from xora_chart.config import load_config
-from xora_chart.services.binance_ws import BinanceWSHub, ensure_hub
+from xora_chart.services.binance_ws import ensure_hub
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,13 @@ async def _cycle_loop() -> None:
             )
         except asyncio.CancelledError:
             raise
+        except RuntimeError as exc:
+            # A user-triggered scan can briefly own the single-cycle coordinator.
+            # That is expected; the scheduler simply tries again next interval.
+            if "already running" in str(exc):
+                log.info("Automatic scan skipped because another cycle is active")
+            else:
+                log.exception("Hybrid automatic scan failed")
         except Exception:
             log.exception("Hybrid automatic scan failed")
         await asyncio.sleep(interval)
@@ -61,13 +69,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="XORA Chart AI",
     description="REST-history + WebSocket-live reference-chart gated scanner",
-    version="0.6.0",
+    version="0.7.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
 )
 
-# Browser/application RPC remains WebSocket-only.  Binance historical market data
-# is fetched separately from Binance REST; no REST application router is mounted.
+# Trading/application commands remain WebSocket RPC. HTTP is limited to
+# operational liveness/readiness so deployments do not need to open an RPC
+# WebSocket merely to determine whether the service is healthy.
+app.include_router(ops_router)
 app.include_router(ws_router)

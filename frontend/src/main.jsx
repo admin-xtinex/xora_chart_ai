@@ -4,8 +4,10 @@ import App from './App.jsx'
 import LandingPage from './LandingPage.jsx'
 import './index.css'
 import './landing-base.css'
+import './brand-v2.css'
 import './landing-products.css'
 import './landing-sections.css'
+import './landing-v2.css'
 import './dashboard-future.css'
 
 function RootExperience() {

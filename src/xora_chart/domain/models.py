@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +17,10 @@ from xora_chart.domain.enums import (
     SignalStatus,
     TradeMode,
 )
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class TradingSetup(BaseModel):
@@ -52,7 +56,7 @@ class CandleWindow(BaseModel):
     symbol: str
     interval: str
     candles: list[Candle]
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=utc_now)
 
 
 class DiscoveredCoin(BaseModel):
@@ -88,7 +92,7 @@ class MarketAnalysis(BaseModel):
     regime: MarketRegime = MarketRegime.RANGING
     signals: list[AnalysisSignal] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class TradeLevels(BaseModel):
@@ -116,7 +120,7 @@ class TradeDecision(BaseModel):
     confirmations: list[Confirmation] = Field(default_factory=list)
     analysis_score: float = 0.0
     pattern_similarity: float = 0.0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class Position(BaseModel):
@@ -142,7 +146,7 @@ class Position(BaseModel):
     last_price: float | None = None
     exit_reason: str | None = None
 
-    opened_at: datetime = Field(default_factory=datetime.utcnow)
+    opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None
     exit_price: float | None = None
     realized_pnl: float | None = None
@@ -166,7 +170,7 @@ class Opportunity(BaseModel):
     analysis: dict[str, Any] = Field(default_factory=dict)
 
     rank_score: float = 0.0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
     cycle_id: str | None = None
 
     candle_count: int = 0
@@ -176,7 +180,7 @@ class Opportunity(BaseModel):
 
 class CycleResult(BaseModel):
     cycle_id: str = Field(default_factory=lambda: str(uuid4()))
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=utc_now)
     finished_at: datetime | None = None
     symbols_scanned: list[str] = Field(default_factory=list)
     opportunities: list[Opportunity] = Field(default_factory=list)

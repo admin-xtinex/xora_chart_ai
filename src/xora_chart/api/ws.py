@@ -1,8 +1,8 @@
 """WebSocket application transport for the XORA dashboard.
 
-Application RPC remains WebSocket-only.  Market-data transport is hybrid:
-historical Binance Futures klines may arrive from REST (backend or browser);
-live prices/order-book state come from Binance WebSockets.
+Application commands remain WebSocket RPC. Historical Binance Futures klines may
+arrive from REST (backend or browser); live prices/order-book state come from
+Binance WebSockets. Operational HTTP liveness/readiness lives in ``api.ops``.
 """
 
 from __future__ import annotations
@@ -12,16 +12,15 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from xora_chart.application import discovery
+from xora_chart.application.cycle_runtime import cycle_status, run_cycle
 from xora_chart.application.live import enrich_position, last_price
-from xora_chart.application.pipeline import run_cycle
-from xora_chart.application.reference_visual import library_status
+from xora_chart.application.status import health_snapshot, positions_summary
 from xora_chart.application.symbol_scan import analyze_symbol
 from xora_chart.catalog import list_patterns
-from xora_chart.domain.enums import OpportunityStatus, PositionStatus
+from xora_chart.domain.enums import OpportunityStatus
 from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
 from xora_chart.engines.trade.engine import open_from_opportunity
 from xora_chart.persistence.store import Store
-from xora_chart.services.binance_ws import BinanceWSHub, MIN_CANDLES
 
 router = APIRouter()
 
@@ -36,94 +35,63 @@ def _dump(value: Any) -> Any:
     return value
 
 
-def _health() -> dict[str, Any]:
-    store = Store.instance()
-    latest = store.latest_cycle()
-    settings = store.get_settings()
-    hub = BinanceWSHub.instance()
-    ref = library_status()
-    connected = hub.websocket_connected()
-    tickers = hub.ticker_count()
-    refs_ready = int(ref.get("count", 0)) >= 10
-    last_age = hub.last_message_age_seconds()
-    events = hub.event_telemetry()
-    ticker_age = events["ticker"]["age_seconds"]
-    market_live = (
-        connected
-        and tickers > 0
-        and ticker_age is not None
-        and float(ticker_age) < 30
-    )
-
-    return {
-        "status": "ok" if market_live and refs_ready else "degraded",
-        "service": "xora-chart-ai",
-        "transport": "websocket-rpc",
-        "market_data": "binance-rest-history-websocket-live",
-        "rest_market_data": True,
-        "history_data": "binance-futures-rest",
-        "live_market_data": "binance-futures-websocket",
-        "market_live": market_live,
-        "ws_connected": connected,
-        "ws_tickers": tickers,
-        "ws_ready_symbols": hub.ready_symbol_count(),
-        "ws_min_candles": MIN_CANDLES,
-        "ws_last_message_age_seconds": last_age,
-        "ws_events": events,
-        "auto_trade": settings.get("auto_trade", False),
-        "trade_mode": settings.get("trade_mode", "demo"),
-        "latest_cycle_id": latest.cycle_id if latest else None,
-        "latest_cycle_errors": latest.errors[:5] if latest else [],
-        "latest_opportunities": len(latest.opportunities) if latest else 0,
-        "opportunities_cached": len(store.list_opportunities()),
-        "positions_open": len([p for p in store.list_positions() if p.status == PositionStatus.OPEN]),
-        "reference_gate": True,
-        "reference_images": int(ref.get("count", 0)),
-        "reference_ready": refs_ready,
-    }
+def _normalize_symbol(raw: Any) -> str:
+    compact = str(raw or "").strip().upper()
+    for token in ("/", "-", " "):
+        compact = compact.replace(token, "")
+    if not compact:
+        raise RuntimeError("Enter a coin symbol")
+    return compact if compact.endswith("USDT") else f"{compact}USDT"
 
 
-def _positions_summary() -> dict[str, Any]:
-    all_pos = [enrich_position(p) for p in Store.instance().list_positions()]
-    closed = [p for p in all_pos if p.get("status") == "closed"]
-    open_p = [p for p in all_pos if p.get("status") == "open"]
-    realized = [p.get("realized_pnl") for p in closed if p.get("realized_pnl") is not None]
-    live = [p.get("live_pnl") for p in open_p if p.get("live_pnl") is not None]
-    wins = [p for p in realized if p > 0]
-    losses = [p for p in realized if p < 0]
-    total_pnl = sum(realized) if realized else 0.0
-    return {
-        "open_count": len(open_p),
-        "closed_count": len(closed),
-        "total_trades": len(all_pos),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": round(len(wins) / len(realized) * 100, 1) if realized else 0.0,
-        "total_realized_pnl": round(total_pnl, 4),
-        "open_unrealized_pnl": round(sum(live), 4) if live else 0.0,
-        "avg_pnl": round(total_pnl / len(realized), 4) if realized else 0.0,
-        "best_trade": max(realized) if realized else None,
-        "worst_trade": min(realized) if realized else None,
-    }
+def _safe_limit(raw: Any, *, default: int, maximum: int) -> int:
+    try:
+        return max(1, min(int(raw), maximum))
+    except (TypeError, ValueError):
+        return default
+
+
+def _match_confidence(opp: Any) -> float:
+    match = getattr(opp, "best_match", None)
+    if not match:
+        return -1.0
+    reference = float(getattr(match, "reference_similarity", 0.0) or 0.0)
+    similarity = float(getattr(match, "similarity", 0.0) or 0.0)
+    return reference if reference > 0 else similarity
 
 
 async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
     store = Store.instance()
 
     if action == "health":
-        return _health()
+        return health_snapshot()
     if action == "patterns.list":
         return list_patterns(direction=payload.get("direction"), pattern_type=payload.get("type"))
     if action == "opportunities.list":
-        return store.list_opportunities(limit=min(int(payload.get("limit", 30)), 100))
+        limit = _safe_limit(payload.get("limit", 30), default=30, maximum=100)
+        items = store.list_opportunities(limit=limit)
+        return sorted(items, key=_match_confidence, reverse=True)
     if action == "settings.get":
         return store.get_settings()
     if action == "settings.update":
-        patch = {k: v for k, v in payload.items() if k in {"auto_trade", "trade_mode"}}
+        patch: dict[str, Any] = {}
+        if "auto_trade" in payload:
+            patch["auto_trade"] = bool(payload["auto_trade"])
+        if "trade_mode" in payload:
+            mode = str(payload.get("trade_mode") or "demo").lower()
+            if mode != "demo":
+                raise RuntimeError("Live trading is not available in XORA Chart AI yet; demo mode is enforced")
+            patch["trade_mode"] = "demo"
         return store.update_settings(patch)
     if action == "cycle.plan":
         coins = (await discovery.run_discovery())[:20]
-        return {"coins": coins, "count": len(coins)}
+        return {"coins": coins, "count": len(coins), "status": cycle_status()}
+    if action == "cycle.status":
+        return cycle_status()
+    if action == "cycles.latest":
+        return store.latest_cycle()
+    if action == "cycles.list":
+        return store.list_cycles(limit=_safe_limit(payload.get("limit", 20), default=20, maximum=50))
     if action == "cycle.run":
         return await run_cycle(
             histories=payload.get("histories") or None,
@@ -131,20 +99,23 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
         )
     if action == "analyze":
         return await analyze_symbol(
-            str(payload.get("symbol") or ""),
+            _normalize_symbol(payload.get("symbol")),
             history_rows=payload.get("history") or None,
         )
     if action == "quote":
-        symbol = str(payload.get("symbol") or "").upper()
+        symbol = _normalize_symbol(payload.get("symbol"))
         px = last_price(symbol)
         if px is None:
             raise RuntimeError(f"No WebSocket price for {symbol}")
         return {"symbol": symbol, "price": px}
     if action == "positions.list":
         manage_open_positions()
-        return [enrich_position(p) for p in list_positions(status=payload.get("status"))]
+        status = str(payload.get("status") or "").lower() or None
+        if status not in (None, "open", "closed"):
+            raise RuntimeError("Position status must be open or closed")
+        return [enrich_position(p) for p in list_positions(status=status)]
     if action == "positions.summary":
-        return _positions_summary()
+        return positions_summary()
     if action == "positions.manage":
         manage_open_positions()
         return [enrich_position(p) for p in list_positions(status="open")]
@@ -163,8 +134,6 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
             reason=str(payload.get("reason") or "manual"),
             store=store,
         )
-    if action == "cycles.latest":
-        return store.latest_cycle()
 
     raise RuntimeError(f"Unknown WebSocket action: {action}")
 
@@ -173,12 +142,14 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
 async def dashboard_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
-        await websocket.send_json({"type": "ready", "data": _health()})
+        await websocket.send_json({"type": "ready", "data": health_snapshot()})
         while True:
             message = await websocket.receive_json()
             request_id = message.get("id")
             action = str(message.get("action") or "")
             payload = message.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
             try:
                 data = await _dispatch(action, payload)
                 await websocket.send_json(
