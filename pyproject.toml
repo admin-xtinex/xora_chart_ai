@@ -1,6 +1,6 @@
 [project]
 name = "xora-chart-ai"
-version = "0.6.0"
+version = "0.7.0"
 description = "XORA REST-History + WebSocket-Live Reference Chart Scanner"
 readme = "README.md"
 requires-python = ">=3.11"
