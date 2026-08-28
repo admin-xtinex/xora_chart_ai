@@ -51,6 +51,15 @@ def _safe_limit(raw: Any, *, default: int, maximum: int) -> int:
         return default
 
 
+def _match_confidence(opp: Any) -> float:
+    match = getattr(opp, "best_match", None)
+    if not match:
+        return -1.0
+    reference = float(getattr(match, "reference_similarity", 0.0) or 0.0)
+    similarity = float(getattr(match, "similarity", 0.0) or 0.0)
+    return reference if reference > 0 else similarity
+
+
 async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
     store = Store.instance()
 
@@ -59,7 +68,9 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
     if action == "patterns.list":
         return list_patterns(direction=payload.get("direction"), pattern_type=payload.get("type"))
     if action == "opportunities.list":
-        return store.list_opportunities(limit=_safe_limit(payload.get("limit", 30), default=30, maximum=100))
+        limit = _safe_limit(payload.get("limit", 30), default=30, maximum=100)
+        items = store.list_opportunities(limit=limit)
+        return sorted(items, key=_match_confidence, reverse=True)
     if action == "settings.get":
         return store.get_settings()
     if action == "settings.update":
