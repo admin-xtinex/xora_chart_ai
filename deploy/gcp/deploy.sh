@@ -37,65 +37,66 @@ echo "Deployment status:"
 docker compose "${COMPOSE_ARGS[@]}" ps
 
 echo
-echo "WebSocket health check:"
-for i in {1..18}; do
+echo "Backend readiness check (hybrid REST-history + WebSocket-live):"
+for i in {1..24}; do
   if docker compose "${COMPOSE_ARGS[@]}" exec -T backend \
     python - <<'PY'
-import asyncio
 import json
 import sys
-import websockets
+import urllib.error
+import urllib.request
 
-async def main():
-    async with websockets.connect("ws://127.0.0.1:8030/ws", open_timeout=5) as ws:
-        await ws.recv()  # ready frame
-        await ws.send(json.dumps({"id": "deploy-health", "action": "health", "payload": {}}))
-        msg = json.loads(await ws.recv())
-        data = msg.get("data") or {}
-        ticker_count = int(data.get("ws_tickers") or 0)
-        last_age = data.get("ws_last_message_age_seconds")
-        market_live = (
-            data.get("ws_connected") is True
-            and ticker_count > 0
-            and last_age is not None
-            and float(last_age) < 30.0
-        )
-        ok = (
-            msg.get("ok") is True
-            and data.get("transport") == "websocket-only"
-            and data.get("market_data") == "binance-websocket-only"
-            and data.get("rest_market_data") is False
-            and data.get("reference_gate") is True
-            and int(data.get("reference_images") or 0) >= 10
-            and market_live
-        )
-        print(json.dumps(data, indent=2))
-        if not ok:
-            print(
-                f"Market data is not healthy: connected={data.get('ws_connected')} "
-                f"tickers={ticker_count} last_age={last_age}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8030/readyz", timeout=8) as response:
+        data = json.load(response)
+except urllib.error.HTTPError as exc:
+    try:
+        data = json.load(exc)
+    except Exception:
+        data = {"status": "degraded", "http_status": exc.code}
+    print(json.dumps(data, indent=2))
+    sys.exit(1)
+except Exception as exc:
+    print(f"readiness request failed: {exc}", file=sys.stderr)
+    sys.exit(1)
 
-asyncio.run(main())
+print(json.dumps(data, indent=2))
+ok = (
+    data.get("ready") is True
+    and data.get("transport") == "websocket-rpc"
+    and data.get("market_data") == "binance-rest-history-websocket-live"
+    and data.get("rest_market_data") is True
+    and data.get("reference_gate") is True
+    and data.get("reference_ready") is True
+    and int(data.get("reference_images") or 0) >= 10
+    and data.get("market_live") is True
+    and data.get("ws_connected") is True
+    and int(data.get("ws_tickers") or 0) > 0
+)
+if not ok:
+    print("Backend has not reached production readiness yet", file=sys.stderr)
+    sys.exit(1)
 PY
   then
     if [[ "$TLS_ENABLED" == true ]]; then
-      HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
+      HOME_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 \
         --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
+      CHARTS_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 \
+        --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/charts || true)"
     else
       HOME_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+      CHARTS_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/charts || true)"
     fi
-    if [[ "$HOME_CODE" == "200" ]]; then
-      echo "Backend market WebSocket and frontend are healthy."
+    if [[ "$HOME_CODE" == "200" && "$CHARTS_CODE" == "200" ]]; then
+      echo "Backend ready and both landing + Charts AI routes are healthy."
       exit 0
     fi
+    echo "Frontend warming: landing=$HOME_CODE charts=$CHARTS_CODE"
   fi
   sleep 5
 done
 
-echo "Production health check failed: frontend may be serving, but live market data is not usable."
+echo "Production readiness check failed."
 echo "Inspect logs with:"
 printf 'docker compose'
 printf ' %q' "${COMPOSE_ARGS[@]}"
