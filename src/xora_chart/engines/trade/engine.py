@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 from xora_chart.config import load_config
 from xora_chart.domain.enums import PositionStatus, Side, TradeMode
@@ -157,7 +157,7 @@ def close_position(
     pos.exit_price = px
     pos.exit_reason = reason
     pos.realized_pnl = round(pnl, 4)
-    pos.closed_at = datetime.utcnow()
+    pos.closed_at = datetime.now(UTC)
     store.save_position(pos)
     log.info("Closed %s reason=%s px=%s pnl=%s", pos.symbol, reason, px, pos.realized_pnl)
     return pos
