@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { createChart, ColorType, LineStyle } from 'lightweight-charts'
 
-/**
- * Live Binance candles + trade levels + transparent pattern geometry.
- */
-export default function CandleChart({
-  candles = [],
-  trade = null,
-  overlays = null,
-  height = 380,
-}) {
+function overlayStyle(style) {
+  const key = String(style || '').toLowerCase()
+  if (key === 'solid') return LineStyle.Solid
+  if (key === 'dashed') return LineStyle.Dashed
+  return LineStyle.Dotted
+}
+
+/** Live Binance candles + trade levels + pattern geometry. */
+export default function CandleChart({ candles = [], trade = null, overlays = null, height = 380 }) {
   const containerRef = useRef(null)
 
   useEffect(() => {
@@ -17,43 +17,24 @@ export default function CandleChart({
 
     const chart = createChart(containerRef.current, {
       height,
-      layout: {
-        background: { type: ColorType.Solid, color: '#0a0e17' },
-        textColor: '#94a3b8',
-      },
-      grid: {
-        vertLines: { color: '#151c2c' },
-        horzLines: { color: '#151c2c' },
-      },
-      rightPriceScale: { borderColor: '#1c2538' },
-      timeScale: {
-        borderColor: '#1c2538',
-        timeVisible: true,
-        secondsVisible: false,
-      },
+      layout: { background: { type: ColorType.Solid, color: '#070c14' }, textColor: '#8190a8' },
+      grid: { vertLines: { color: '#111a29' }, horzLines: { color: '#111a29' } },
+      rightPriceScale: { borderColor: '#1a2639', scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: '#1a2639', timeVisible: true, secondsVisible: false, rightOffset: 6 },
       crosshair: {
-        vertLine: { color: '#334155', labelBackgroundColor: '#1c2538' },
-        horzLine: { color: '#334155', labelBackgroundColor: '#1c2538' },
+        vertLine: { color: '#34445d', labelBackgroundColor: '#172235' },
+        horzLine: { color: '#34445d', labelBackgroundColor: '#172235' },
       },
     })
 
     const candleSeries = chart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      upColor: '#22c55e', downColor: '#ef4444',
+      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
     })
 
     const data = (candles || [])
-      .map((c) => ({
-        time: Math.floor((c.open_time || c.close_time || 0) / 1000),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }))
+      .map((c) => ({ time: Math.floor((c.open_time || c.close_time || 0) / 1000), open: c.open, high: c.high, low: c.low, close: c.close }))
       .filter((c) => c.time > 0)
       .sort((a, b) => a.time - b.time)
 
@@ -64,56 +45,38 @@ export default function CandleChart({
       seen.add(bar.time)
       unique.push(bar)
     }
+    if (unique.length) { candleSeries.setData(unique); chart.timeScale().fitContent() }
 
-    if (unique.length) {
-      candleSeries.setData(unique)
-      chart.timeScale().fitContent()
-    }
-
-    // ── Pattern structure overlays (transparent) ──────────────────────────
     const ov = overlays || {}
-
-    // Structure lines (peak connections, neckline segments, flag channel)
     for (const ln of ov.lines || []) {
       if (!ln.points?.length) continue
       const lineSeries = chart.addLineSeries({
-        color: ln.color || 'rgba(167,139,250,0.45)',
-        lineWidth: 2,
-        lineStyle: LineStyle.Solid,
+        color: ln.color || 'rgba(103,232,249,0.78)',
+        lineWidth: Number(ln.line_width || 2),
+        lineStyle: overlayStyle(ln.style),
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
         title: ln.title || '',
       })
-      const pts = ln.points
-        .map((p) => ({ time: p.time, value: p.value }))
-        .filter((p) => p.time > 0)
-        .sort((a, b) => a.time - b.time)
-      // dedupe times
-      const s = new Set()
-      const clean = []
-      for (const p of pts) {
-        if (s.has(p.time)) continue
-        s.add(p.time)
-        clean.push(p)
-      }
+      const pts = ln.points.map((p) => ({ time: p.time, value: p.value })).filter((p) => p.time > 0).sort((a, b) => a.time - b.time)
+      const usedTimes = new Set()
+      const clean = pts.filter((p) => !usedTimes.has(p.time) && usedTimes.add(p.time))
       if (clean.length >= 2) lineSeries.setData(clean)
     }
 
-    // Horizontal structure levels (neckline, flag high/low, rim…)
     for (const lv of ov.levels || []) {
       if (lv.price == null) continue
       candleSeries.createPriceLine({
         price: lv.price,
-        color: lv.color || 'rgba(167,139,250,0.7)',
+        color: lv.color || 'rgba(167,139,250,0.78)',
         lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
+        lineStyle: overlayStyle(lv.style || 'dashed'),
         axisLabelVisible: true,
         title: lv.title || '',
       })
     }
 
-    // Point markers (LS / Head / RS / T1 / T2 …)
     if (ov.markers?.length) {
       const markers = ov.markers
         .filter((m) => m.time > 0)
@@ -125,73 +88,41 @@ export default function CandleChart({
           text: m.label || '',
         }))
         .sort((a, b) => a.time - b.time)
-      // unique times for markers
-      const ms = new Set()
-      const um = []
-      for (const m of markers) {
-        if (ms.has(m.time)) continue
-        ms.add(m.time)
-        um.push(m)
-      }
-      if (um.length) candleSeries.setMarkers(um)
+      const markerTimes = new Set()
+      const uniqueMarkers = markers.filter((m) => !markerTimes.has(m.time) && markerTimes.add(m.time))
+      if (uniqueMarkers.length) candleSeries.setMarkers(uniqueMarkers)
     }
 
-    // ── Trade levels (Entry / SL / TP) ─────────────────────────────────────
     if (trade) {
       const tradeLines = [
-        { price: trade.entry, color: '#3b82f6', title: 'Entry' },
-        { price: trade.stop_loss, color: '#ef4444', title: 'SL' },
+        { price: trade.entry, color: '#4f8cff', title: 'Entry' },
+        { price: trade.stop_loss, color: '#fb7185', title: 'SL' },
         { price: trade.take_profit_1, color: '#22c55e', title: 'TP1' },
         { price: trade.take_profit_2, color: '#4ade80', title: 'TP2' },
         { price: trade.take_profit_3, color: '#86efac', title: 'TP3' },
       ]
       for (const ln of tradeLines) {
-        if (ln.price == null || Number.isNaN(ln.price)) continue
-        candleSeries.createPriceLine({
-          price: ln.price,
-          color: ln.color,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dotted,
-          axisLabelVisible: true,
-          title: ln.title,
-        })
+        if (ln.price == null || Number.isNaN(Number(ln.price))) continue
+        candleSeries.createPriceLine({ price: ln.price, color: ln.color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: ln.title })
       }
     }
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth })
-      }
+      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
     })
     ro.observe(containerRef.current)
-
-    return () => {
-      ro.disconnect()
-      chart.remove()
-    }
+    return () => { ro.disconnect(); chart.remove() }
   }, [candles, trade, overlays, height])
 
   if (!candles?.length) {
-    return (
-      <div
-        className="rounded-xl border border-xora-600/50 bg-xora-950 flex items-center justify-center text-slate-500 text-sm"
-        style={{ height }}
-      >
-        No live candle data — run a new scan
-      </div>
-    )
+    return <div className="flex items-center justify-center bg-[#070c14] text-sm text-slate-600" style={{ height }}>No candle data available for this position.</div>
   }
 
   return (
-    <div className="rounded-xl overflow-hidden border border-xora-600/50 bg-xora-950">
-      <div className="px-3 py-1.5 border-b border-xora-600/40 flex items-center justify-between text-[10px] text-slate-500">
+    <div className="overflow-hidden bg-[#070c14]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[.05] px-3 py-2 text-[9px] text-slate-600">
         <span>Binance Futures · 1m · {candles.length} candles</span>
-        <span className="flex gap-3 flex-wrap justify-end">
-          <span className="text-violet-300/80">Pattern structure</span>
-          <span className="text-blue-400">Entry</span>
-          <span className="text-rose-400">SL</span>
-          <span className="text-emerald-400">TP</span>
-        </span>
+        <span className="flex flex-wrap gap-3"><span className="text-cyan-300/80">- - matched structure</span><span className="text-blue-400">Entry</span><span className="text-rose-400">SL</span><span className="text-emerald-400">TP</span></span>
       </div>
       <div ref={containerRef} />
     </div>
