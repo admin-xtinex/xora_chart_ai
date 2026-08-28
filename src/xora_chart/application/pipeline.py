@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from xora_chart.application import discovery, explainer, market_data, matcher, ranking
@@ -29,7 +29,6 @@ async def run_cycle(
     result = CycleResult()
     log.info("Cycle %s started (auto_trade=%s)", result.cycle_id, store.auto_trade_enabled())
 
-    # Close demo trades that already hit SL / TP before opening more.
     try:
         closed = manage_open_positions(store)
         result.positions_closed = len(closed)
@@ -49,13 +48,13 @@ async def run_cycle(
     except Exception as e:
         log.exception("Discovery failed")
         result.errors.append(f"discovery: {e}")
-        result.finished_at = datetime.utcnow()
+        result.finished_at = datetime.now(UTC)
         store.save_cycle(result)
         return result
 
     if not coins:
         result.errors.append("discovery: 0 coins (WebSocket prices not ready)")
-        result.finished_at = datetime.utcnow()
+        result.finished_at = datetime.now(UTC)
         store.save_cycle(result)
         return result
 
@@ -64,13 +63,13 @@ async def run_cycle(
     except Exception as e:
         log.exception("Market data failed")
         result.errors.append(f"market_data: {e}")
-        result.finished_at = datetime.utcnow()
+        result.finished_at = datetime.now(UTC)
         store.save_cycle(result)
         return result
 
     if not windows:
         result.errors.append("history: no usable closed-candle windows")
-        result.finished_at = datetime.utcnow()
+        result.finished_at = datetime.now(UTC)
         store.save_cycle(result)
         return result
 
@@ -150,7 +149,7 @@ async def run_cycle(
 
     ranked = ranking.rank_opportunities(opportunities)
     result.opportunities = ranked
-    result.finished_at = datetime.utcnow()
+    result.finished_at = datetime.now(UTC)
 
     store.save_cycle(result)
     store.save_opportunities(ranked)
