@@ -1,17 +1,21 @@
-name: XORA tests (manual self-hosted)
+name: XORA tests
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: xora-self-hosted-vm
+  group: xora-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
+    # Never execute untrusted fork code on the production self-hosted runner.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Test on self-hosted VM
     runs-on: self-hosted
     timeout-minutes: 25
