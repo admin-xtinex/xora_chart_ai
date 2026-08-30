@@ -2,10 +2,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY data/ ./data/
@@ -20,6 +16,6 @@ ENV PORT=8030
 EXPOSE 8030
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8030/api/v1/health || exit 1
+  CMD python -c "import socket; s=socket.create_connection(('127.0.0.1',8030),5); s.close()" || exit 1
 
 CMD ["uvicorn", "xora_chart.main:app", "--host", "0.0.0.0", "--port", "8030"]

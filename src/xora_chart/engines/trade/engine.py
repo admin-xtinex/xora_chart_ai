@@ -35,7 +35,6 @@ def _sizing(entry: float, stop: float, equity: float, risk_pct: float, leverage:
 
 
 def _last_price(symbol: str) -> float | None:
-    """Best available mark/last from WS hub, then ticker snapshot."""
     try:
         from xora_chart.services.binance_ws import BinanceWSHub
 
@@ -78,7 +77,6 @@ def open_position(
     max_pos = int(cfg.get("max_open_positions", 5))
     if len(open_pos) >= max_pos:
         raise RuntimeError(f"Max open positions reached ({max_pos})")
-
     if any(p.symbol == symbol and p.status == PositionStatus.OPEN for p in open_pos):
         raise RuntimeError(f"Already open on {symbol}")
 
@@ -113,13 +111,25 @@ def open_position(
 
 
 def open_from_opportunity(opp: Opportunity, store: Store | None = None) -> Position:
+    """Only execution entry point for an analyzed opportunity.
+
+    APPROVE alone is intentionally insufficient: the best match must retain
+    explicit evidence that it was verified against an uploaded reference chart.
+    This is defense-in-depth in case a future API/decision change regresses.
+    """
     if not opp.decision or opp.decision.action.value != "APPROVE" or not opp.decision.setup:
         raise RuntimeError("Opportunity not APPROVE or missing setup")
+    match = opp.best_match
+    if not match or not match.reference_verified or not match.matched_example:
+        raise RuntimeError("Trade blocked: uploaded reference-chart verification is required")
     return open_position(
         symbol=opp.symbol,
         setup=opp.decision.setup,
         opportunity_id=opp.id,
-        decision_reason=opp.decision.reason,
+        decision_reason=(
+            f"{opp.decision.reason} · reference={match.matched_example} "
+            f"({match.reference_similarity:.1f}%)"
+        ),
         store=store,
     )
 
@@ -154,7 +164,6 @@ def close_position(
 
 
 def _hit(pos: Position, px: float) -> str | None:
-    """Return exit reason if SL/TP touched at price px."""
     if pos.side == Side.BUY:
         if px <= pos.stop_loss:
             return "sl"
@@ -177,7 +186,6 @@ def _hit(pos: Position, px: float) -> str | None:
 
 
 def manage_open_positions(store: Store | None = None) -> list[Position]:
-    """Mark last price and auto-close demo positions that hit SL or TP."""
     store = store or Store.instance()
     closed: list[Position] = []
     for pos in list(store.list_positions()):

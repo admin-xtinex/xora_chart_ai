@@ -9,33 +9,24 @@ services:
     environment:
       - PORT=8030
       - LOG_LEVEL=INFO
+      - XORA_STATE_FILE=/app/state/xora_state.json
+      - XORA_WS_STATE_PATH=/app/state/ws_market.json
+    volumes:
+      - xora_state:/app/state
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8030/api/v1/health"]
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8030),5); s.close()"]
       interval: 15s
-      timeout: 5s
+      timeout: 6s
       retries: 5
       start_period: 10s
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    container_name: xora_chart_worker
-    environment:
-      - LOG_LEVEL=INFO
-      - XORA_API_BASE=http://backend:8030
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        VITE_API_BASE: http://localhost:8030
+        VITE_WS_BASE: ws://localhost:8030/ws
     container_name: xora_chart_ui
     ports:
       - "3030:80"
@@ -43,3 +34,6 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  xora_state:

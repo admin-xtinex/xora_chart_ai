@@ -1,0 +1,128 @@
+name: XORA Self-Hosted VM Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: xora-self-hosted-vm
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    name: Test and deploy on production VM
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 40
+
+    steps:
+      - name: Repair workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d "$GITHUB_WORKSPACE" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE" || true
+          fi
+
+      - name: Checkout commit
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify self-hosted VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner: ${RUNNER_NAME:-unknown}"
+          echo "Host: $(hostname)"
+          echo "Commit: $GITHUB_SHA"
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Docker is not installed on the self-hosted VM." >&2
+            exit 1
+          fi
+          docker version --format 'Docker {{.Server.Version}}'
+
+      - name: Backend compile and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            python:3.12-slim \
+            sh -lc "cp -a /src /work && cd /work && python -m pip install --no-cache-dir -e '.[dev]' && python -m compileall -q src && pytest -q"
+
+      - name: Frontend build
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/frontend:/src:ro" \
+            node:20-alpine \
+            sh -lc 'cp -a /src /work && cd /work && if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi && npm run build'
+
+      - name: Deploy directly on production VM
+        if: ${{ !startsWith(github.event.head_commit.message || '', 'diag:') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="$HOME/xora_chart_ai"
+
+          if [[ ! -d "$DEPLOY_DIR/.git" ]]; then
+            git clone https://github.com/admin-xtinex/xora_chart_ai.git "$DEPLOY_DIR"
+          fi
+
+          cd "$DEPLOY_DIR"
+          git config core.fileMode false
+          git fetch --prune origin main
+          git checkout -f main
+          git reset --hard "$GITHUB_SHA"
+
+          if [[ ! -f .env.production ]]; then
+            cp .env.production.example .env.production
+          fi
+
+          chmod +x deploy/gcp/deploy.sh deploy/gcp/cleanup-old-data.sh deploy/gcp/install-cleanup-cron.sh
+          ./deploy/gcp/deploy.sh
+          sudo REPO_DIR="$DEPLOY_DIR" bash deploy/gcp/install-cleanup-cron.sh
+
+      - name: Report XORA WebSocket telemetry
+        if: ${{ success() && !startsWith(github.event.head_commit.message || '', 'diag:') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec xora_chart_api python - <<'PY'
+          import asyncio
+          import json
+          import websockets
+
+          async def main():
+              async with websockets.connect("ws://127.0.0.1:8030/ws", open_timeout=5) as ws:
+                  await ws.recv()
+                  await ws.send(json.dumps({"id": "telemetry", "action": "health", "payload": {}}))
+                  msg = json.loads(await ws.recv())
+                  print(json.dumps(msg.get("data") or {}, indent=2))
+
+          asyncio.run(main())
+          PY
+
+      - name: Verify local frontend
+        if: ${{ success() && !startsWith(github.event.head_commit.message || '', 'diag:') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          HTTP_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 http://127.0.0.1/ || true)"
+          HTTPS_CODE="$(curl --silent --insecure --output /dev/null --write-out '%{http_code}' --max-time 10 --resolve xora.xtinex.com:443:127.0.0.1 https://xora.xtinex.com/ || true)"
+          if [[ "$HTTPS_CODE" == "200" || "$HTTP_CODE" == "200" || "$HTTP_CODE" == "301" || "$HTTP_CODE" == "302" ]]; then
+            echo "Frontend reachable (HTTP=${HTTP_CODE:-none}, HTTPS=${HTTPS_CODE:-none})."
+            exit 0
+          fi
+          echo "Local frontend verification failed. HTTP=${HTTP_CODE:-none} HTTPS=${HTTPS_CODE:-none}" >&2
+          exit 1

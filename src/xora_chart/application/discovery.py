@@ -7,7 +7,7 @@ from xora_chart.services import binance
 
 async def run_discovery() -> list[DiscoveredCoin]:
     cfg = load_config().get("discovery", {})
-    return await binance.discover_coins(
+    coins = await binance.discover_coins(
         top_gainers=int(cfg.get("top_gainers", 5)),
         top_losers=int(cfg.get("top_losers", 5)),
         top_volume=int(cfg.get("top_volume", 5)),
@@ -15,3 +15,4 @@ async def run_discovery() -> list[DiscoveredCoin]:
         quote_asset=cfg.get("quote_asset", "USDT"),
         min_quote_volume=float(cfg.get("min_quote_volume", 500_000)),
     )
+    return coins[: max(1, int(cfg.get("scan_limit", 20)))]

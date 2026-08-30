@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xora_chart_api
+    environment:
+      PORT: "8030"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      XORA_TRADE_MODE: "${XORA_TRADE_MODE:-demo}"
+      XORA_STATE_FILE: "/app/state/xora_state.json"
+      XORA_WS_STATE_PATH: "/app/state/ws_market.json"
+    volumes:
+      - xora_state:/app/state
+    expose:
+      - "8030"
+    restart: unless-stopped
+    mem_limit: 640m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8030),5); s.close()"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/gcp/Dockerfile.frontend
+      args:
+        VITE_WS_BASE: ""
+    container_name: xora_chart_ui
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 128m
+
+volumes:
+  xora_state:

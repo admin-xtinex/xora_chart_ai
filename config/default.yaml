@@ -7,29 +7,35 @@ discovery:
   top_losers: 5
   top_volume: 5
   trending: 5
+  scan_limit: 20
   quote_asset: USDT
   min_quote_volume: 500000
 
 market_data:
   interval: "1m"
   candle_limit: 100
-  venue: binance_futures
+  history_source: binance_futures_rest
+  live_source: binance_futures_websocket
+  minimum_history_candles: 20
+  minimum_ws_candles: 20
+  history_concurrency: 5
 
 matcher:
   min_similarity: 55.0
-  ai_threshold: 70.0
   max_matches_per_symbol: 3
 
 analysis:
   weights:
-    volume: 0.30
-    order_book: 0.25
+    volume: 0.35
+    order_book: 0.30
     funding: 0.15
-    open_interest: 0.10
+    open_interest: 0.00
     volatility: 0.20
 
 decision:
   min_similarity: 55.0
+  min_reference_similarity: 55.0
+  expected_reference_images: 10
   min_analysis_score: 45.0
   require_all_required: true
   min_risk_reward: 1.5
@@ -38,7 +44,7 @@ decision:
 trade:
   mode: demo
   live_enabled: false
-  auto_trade: false          # when true, APPROVE → demo open automatically
+  auto_trade: false
   demo_equity: 10000
   risk_percent: 0.5
   default_leverage: 3
@@ -54,12 +60,6 @@ ranking:
     confidence: 0.25
     risk_reward: 0.15
     analysis: 0.20
-
-ai:
-  enabled: true
-  provider: openai_compatible
-  model: gpt-4o-mini
-  base_url: https://api.openai.com/v1
 
 store:
   max_cycles_kept: 50

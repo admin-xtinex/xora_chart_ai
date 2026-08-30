@@ -69,6 +69,8 @@ class PatternMatch(BaseModel):
     direction: Direction
     similarity: float
     matched_example: str | None = None
+    reference_similarity: float = 0.0
+    reference_verified: bool = False
     score_breakdown: dict[str, float] = Field(default_factory=dict)
 
 
@@ -138,7 +140,7 @@ class Position(BaseModel):
     decision_reason: str | None = None
 
     last_price: float | None = None
-    exit_reason: str | None = None  # sl | tp1 | tp2 | tp3 | manual | expire
+    exit_reason: str | None = None
 
     opened_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: datetime | None = None

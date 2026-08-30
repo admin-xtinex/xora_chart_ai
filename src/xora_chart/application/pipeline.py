@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from xora_chart.application import discovery, explainer, market_data, matcher, ranking
+from xora_chart.application.live import last_price
 from xora_chart.domain.enums import DecisionAction, OpportunityStatus
-from xora_chart.domain.models import CycleResult, Opportunity
+from xora_chart.domain.models import CycleResult, DiscoveredCoin, Opportunity
 from xora_chart.engines.analysis import run_analysis
 from xora_chart.engines.decision import run_decision
 from xora_chart.engines.trade.engine import manage_open_positions, open_from_opportunity
@@ -16,12 +18,18 @@ from xora_chart.persistence.store import Store
 log = logging.getLogger(__name__)
 
 
-async def run_cycle(store: Store | None = None) -> CycleResult:
+async def run_cycle(
+    store: Store | None = None,
+    *,
+    histories: dict[str, list[Any]] | None = None,
+    coins_override: list[dict[str, Any] | DiscoveredCoin] | None = None,
+) -> CycleResult:
+    """Run one 20-coin scan using REST history and WebSocket live evidence."""
     store = store or Store.instance()
     result = CycleResult()
     log.info("Cycle %s started (auto_trade=%s)", result.cycle_id, store.auto_trade_enabled())
 
-    # Close demo trades that already hit SL / TP before opening more
+    # Close demo trades that already hit SL / TP before opening more.
     try:
         closed = manage_open_positions(store)
         result.positions_closed = len(closed)
@@ -30,7 +38,13 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
         result.errors.append(f"manage: {e}")
 
     try:
-        coins = await discovery.run_discovery()
+        if coins_override is not None:
+            coins = [
+                c if isinstance(c, DiscoveredCoin) else DiscoveredCoin.model_validate(c)
+                for c in coins_override
+            ][:20]
+        else:
+            coins = (await discovery.run_discovery())[:20]
         result.symbols_scanned = [c.symbol for c in coins]
     except Exception as e:
         log.exception("Discovery failed")
@@ -40,16 +54,22 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
         return result
 
     if not coins:
-        result.errors.append("discovery: 0 coins (WS/ticker not ready)")
+        result.errors.append("discovery: 0 coins (WebSocket prices not ready)")
         result.finished_at = datetime.utcnow()
         store.save_cycle(result)
         return result
 
     try:
-        windows = await market_data.fetch_windows(coins)
+        windows = await market_data.fetch_windows(coins, histories=histories)
     except Exception as e:
         log.exception("Market data failed")
         result.errors.append(f"market_data: {e}")
+        result.finished_at = datetime.utcnow()
+        store.save_cycle(result)
+        return result
+
+    if not windows:
+        result.errors.append("history: no usable closed-candle windows")
         result.finished_at = datetime.utcnow()
         store.save_cycle(result)
         return result
@@ -96,6 +116,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 log.warning("explainer %s: %s", window.symbol, e)
                 chart_analysis = {"summary": decision.reason or ""}
 
+            live_px = last_price(window.symbol)
             opp = Opportunity(
                 symbol=window.symbol,
                 interval=window.interval,
@@ -110,7 +131,7 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                 analysis=chart_analysis,
                 cycle_id=result.cycle_id,
                 candle_count=len(window.candles),
-                last_price=window.candles[-1].close if window.candles else None,
+                last_price=live_px if live_px is not None else (window.candles[-1].close if window.candles else None),
                 candles=list(window.candles),
             )
 
@@ -121,7 +142,6 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
                     log.info("Auto-trade opened %s pos=%s", opp.symbol, pos.id[:8])
                 except RuntimeError as e:
                     log.info("Auto-trade skipped %s: %s", opp.symbol, e)
-                    # not a pipeline failure — capacity / already-open is expected
 
             opportunities.append(opp)
         except Exception as e:
@@ -136,9 +156,10 @@ async def run_cycle(store: Store | None = None) -> CycleResult:
     store.save_opportunities(ranked)
 
     log.info(
-        "Cycle %s done — scanned=%d opportunities=%d closed=%d errors=%d",
+        "Cycle %s done — scanned=%d history_windows=%d opportunities=%d closed=%d errors=%d",
         result.cycle_id,
         len(result.symbols_scanned),
+        len(windows),
         len(ranked),
         result.positions_closed,
         len(result.errors),

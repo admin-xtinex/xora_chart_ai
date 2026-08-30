@@ -1,9 +1,16 @@
-"""In-memory store — swap for Redis/Postgres later without changing engines."""
+"""Small durable state store for the single-VM deployment.
+
+The domain API remains the same, but state is snapshotted to JSON so settings,
+opportunities, cycles, and demo positions survive container rebuilds/restarts.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 from xora_chart.config import load_config
@@ -30,6 +37,9 @@ class Store:
             "auto_trade": bool(trade_cfg.get("auto_trade", False)),
             "trade_mode": str(trade_cfg.get("mode", "demo")),
         }
+        self._state_path = Path(os.getenv("XORA_STATE_FILE", "state/xora_state.json"))
+        self._io_lock = threading.RLock()
+        self._restore()
 
     @classmethod
     def instance(cls) -> "Store":
@@ -39,6 +49,46 @@ class Store:
                     cls._instance = Store()
         return cls._instance
 
+    def _restore(self) -> None:
+        try:
+            if not self._state_path.exists():
+                return
+            raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+            self._settings.update(raw.get("settings") or {})
+
+            cycles = [CycleResult.model_validate(x) for x in raw.get("cycles") or []]
+            self._cycles = deque(cycles[: self._max_cycles], maxlen=self._max_cycles)
+            self._latest_cycle = self._cycles[0] if self._cycles else None
+
+            opps = [Opportunity.model_validate(x) for x in raw.get("opportunities") or []]
+            self._opps_by_symbol = {o.symbol.upper(): o for o in opps[: self._max_opps]}
+            self._opp_order = deque([o.symbol.upper() for o in opps[: self._max_opps]])
+
+            positions = [Position.model_validate(x) for x in raw.get("positions") or []]
+            positions = positions[: self._max_positions]
+            self._positions = {p.id: p for p in positions}
+            self._position_order = deque([p.id for p in positions], maxlen=self._max_positions)
+        except Exception:
+            # Corrupt/old state must never stop the scanner from booting.
+            return
+
+    def _persist(self) -> None:
+        with self._io_lock:
+            try:
+                self._state_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = {
+                    "settings": self._settings,
+                    "cycles": [c.model_dump(mode="json") for c in self._cycles],
+                    "opportunities": [o.model_dump(mode="json") for o in self.list_opportunities(self._max_opps)],
+                    "positions": [p.model_dump(mode="json") for p in self.list_positions()],
+                }
+                tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+                tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+                tmp.replace(self._state_path)
+            except Exception:
+                # Runtime scanning should continue even if persistence is temporarily unavailable.
+                return
+
     def get_settings(self) -> dict[str, Any]:
         return dict(self._settings)
 
@@ -47,6 +97,7 @@ class Store:
             self._settings["auto_trade"] = bool(patch["auto_trade"])
         if "trade_mode" in patch and patch["trade_mode"] in ("demo", "live"):
             self._settings["trade_mode"] = patch["trade_mode"]
+        self._persist()
         return self.get_settings()
 
     def auto_trade_enabled(self) -> bool:
@@ -55,24 +106,25 @@ class Store:
     def save_cycle(self, cycle: CycleResult) -> None:
         self._cycles.appendleft(cycle)
         self._latest_cycle = cycle
+        self._persist()
 
     def save_opportunities(self, opps: list[Opportunity]) -> None:
-        """Keep one opportunity per symbol (latest scan wins)."""
         for o in opps:
             key = o.symbol.upper()
-            existing = self._opps_by_symbol.get(key)
-            if existing is None:
+            if key not in self._opps_by_symbol:
                 self._opp_order.appendleft(key)
             self._opps_by_symbol[key] = o
-        # cap
         while len(self._opp_order) > self._max_opps:
             old = self._opp_order.pop()
             self._opps_by_symbol.pop(old, None)
+        self._persist()
 
     def update_opportunity(self, opp: Opportunity) -> None:
-        self._opps_by_symbol[opp.symbol.upper()] = opp
-        if opp.symbol.upper() not in self._opp_order:
-            self._opp_order.appendleft(opp.symbol.upper())
+        key = opp.symbol.upper()
+        self._opps_by_symbol[key] = opp
+        if key not in self._opp_order:
+            self._opp_order.appendleft(key)
+        self._persist()
 
     def latest_cycle(self) -> CycleResult | None:
         return self._latest_cycle
@@ -107,6 +159,7 @@ class Store:
         if pos.id not in self._positions:
             self._position_order.appendleft(pos.id)
         self._positions[pos.id] = pos
+        self._persist()
 
     def get_position(self, pos_id: str) -> Position | None:
         return self._positions.get(pos_id)
