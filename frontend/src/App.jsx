@@ -108,9 +108,9 @@ function OppDetail({ opp, onTraded }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="sticky top-0 z-10 bg-xora-900/95 backdrop-blur border-b border-xora-600/40 px-6 py-4">
+      <div className="sticky top-0 z-10 bg-xtinex-void/95 backdrop-blur border-b border-xtinex-line px-4 sm:px-6 py-4">
         <div className="flex items-center gap-3 flex-wrap">
-          <h2 className="text-xl font-bold">{opp.symbol}</h2>
+          <h2 className="text-xl font-display font-semibold tracking-wide">{opp.symbol}</h2>
           {t.side && <Badge tone={t.side === 'BUY' ? 'buy' : 'sell'}>{t.side}</Badge>}
           {d?.action && <Badge tone={decisionTone(d.action)}>{d.action}</Badge>}
           {opp.status === 'traded' && <Badge tone="traded">TRADED</Badge>}
@@ -119,9 +119,9 @@ function OppDetail({ opp, onTraded }) {
           {m.pattern_name || 'No pattern'} · live {fmt(opp.last_price)} · sim {m.similarity?.toFixed?.(0) ?? '—'}%
         </p>
       </div>
-      <div className="p-6 space-y-5">
+      <div className="p-4 sm:p-6 space-y-5">
         {d && (
-          <section className="rounded-xl border border-xora-600/40 bg-xora-800/60 p-4 space-y-3">
+          <section className="rounded-xl border border-xtinex-line bg-xtinex-ink/80 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm text-slate-200">{d.reason}</div>
               {canTrade && (
@@ -138,7 +138,7 @@ function OppDetail({ opp, onTraded }) {
           </section>
         )}
         {ma && (
-          <section className="rounded-xl border border-xora-600/40 bg-xora-800/60 p-4">
+          <section className="rounded-xl border border-xtinex-line bg-xtinex-ink/80 p-4">
             <div className="flex justify-between mb-2 text-xs uppercase text-slate-400">
               <span>Analysis</span>
               <span className="text-violet-300 font-mono">{ma.score?.toFixed?.(0)} / 100</span>
@@ -170,7 +170,7 @@ function OppDetail({ opp, onTraded }) {
             ['TP3', t.take_profit_3, 'text-emerald-300'],
             ['R:R', t.risk_reward, 'text-sky-300'],
           ].map(([label, val, cls]) => (
-            <div key={label} className="rounded-lg bg-xora-800 border border-xora-600/50 p-3">
+            <div key={label} className="rounded-lg bg-xtinex-ink border border-xtinex-line p-3">
               <div className="text-[10px] uppercase text-slate-500 mb-1">{label}</div>
               <div className={`text-sm font-mono ${cls}`}>{fmt(val)}</div>
             </div>
@@ -246,9 +246,9 @@ function OpportunityBoard({ autoTrade, onToggleAuto }) {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex">
-      <aside className="w-80 shrink-0 border-r border-xora-600/40 bg-xora-900 flex flex-col">
-        <div className="p-3 border-b border-xora-600/40 space-y-2">
+    <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+      <aside className="w-full md:w-80 max-h-[45vh] md:max-h-none shrink-0 border-b md:border-b-0 md:border-r border-xtinex-line bg-xtinex-void flex flex-col">
+        <div className="p-3 border-b border-xtinex-line space-y-2">
           <button
             onClick={handleScan}
             disabled={scanning}
@@ -264,7 +264,7 @@ function OpportunityBoard({ autoTrade, onToggleAuto }) {
               value={coin}
               onChange={(e) => setCoin(e.target.value)}
               placeholder="BTC or ETHUSDT"
-              className="flex-1 min-w-0 bg-xora-800 border border-xora-600/50 rounded-lg px-2 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+              className="flex-1 min-w-0 bg-xtinex-ink border border-xtinex-line rounded-lg px-2 py-2 text-xs text-xtinex-fg placeholder:text-xtinex-faint"
             />
             <button
               type="submit"
@@ -276,7 +276,7 @@ function OpportunityBoard({ autoTrade, onToggleAuto }) {
           </form>
 
           <label className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border cursor-pointer
-            ${autoTrade ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-xora-600/50 bg-xora-800/50'}`}>
+            ${autoTrade ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-xtinex-line bg-xtinex-ink/70'}`}>
             <div>
               <div className="text-xs font-semibold text-slate-200">Auto demo trades</div>
               <div className="text-[10px] text-slate-500">APPROVE → open automatically</div>
@@ -297,7 +297,7 @@ function OpportunityBoard({ autoTrade, onToggleAuto }) {
               key={o.symbol}
               onClick={() => setSelected(o)}
               className={`w-full text-left p-3 rounded-xl border ${
-                selected?.symbol === o.symbol ? 'bg-xora-700 border-blue-500/60' : 'bg-xora-800/80 border-xora-600/50'
+                selected?.symbol === o.symbol ? 'bg-xora-700 border-xtinex-gold/70' : 'bg-xtinex-ink/80 border-xtinex-line'
               }`}
             >
               <div className="flex justify-between">
@@ -314,7 +314,7 @@ function OpportunityBoard({ autoTrade, onToggleAuto }) {
           ))}
         </div>
       </aside>
-      <main className="flex-1 min-w-0 bg-xora-950">
+      <main className="flex-1 min-w-0 bg-xtinex-black">
         <OppDetail opp={selected} onTraded={load} />
       </main>
     </div>
@@ -371,9 +371,9 @@ function TradesPanel() {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex">
-      <aside className="w-[28rem] max-w-full shrink-0 border-r border-xora-600/40 bg-xora-900 flex flex-col">
-        <div className="p-3 border-b border-xora-600/40 space-y-3">
+    <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+      <aside className="w-full md:w-[28rem] max-h-[45vh] md:max-h-none shrink-0 border-b md:border-b-0 md:border-r border-xtinex-line bg-xtinex-void flex flex-col">
+        <div className="p-3 border-b border-xtinex-line space-y-3">
           <div className="flex gap-1">
             {['open', 'closed', ''].map((f) => (
               <button
@@ -399,7 +399,7 @@ function TradesPanel() {
               </div>
               <div className="rounded-lg bg-xora-800/80 p-2">
                 <div className="text-[10px] text-slate-500">Win %</div>
-                <div className="text-sm font-mono text-slate-100">{summary.win_rate}</div>
+                <div className="text-sm font-mono text-xtinex-fg">{summary.win_rate}</div>
               </div>
             </div>
           )}
@@ -414,7 +414,7 @@ function TradesPanel() {
                 key={p.id}
                 onClick={() => setPicked(p)}
                 className={`w-full text-left p-3 rounded-xl border ${
-                  picked?.id === p.id ? 'bg-xora-700 border-blue-500/60' : 'bg-xora-800/80 border-xora-600/50'
+                  picked?.id === p.id ? 'bg-xora-700 border-xtinex-gold/70' : 'bg-xtinex-ink/80 border-xtinex-line'
                 }`}
               >
                 <div className="flex justify-between items-start">
@@ -440,13 +440,13 @@ function TradesPanel() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 bg-xora-950 overflow-y-auto p-6 space-y-4">
+      <main className="flex-1 min-w-0 bg-xtinex-black overflow-y-auto p-4 sm:p-6 space-y-4">
         {!picked && <p className="text-slate-500 text-sm">Select a trade</p>}
         {picked && (
           <>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
-                <h2 className="text-xl font-bold">{picked.symbol}</h2>
+                <h2 className="text-xl font-display font-semibold tracking-wide">{picked.symbol}</h2>
                 <p className="text-xs text-slate-500">
                   {picked.side} · entry {fmt(picked.entry)} · live {fmt(picked.live_price)}
                 </p>
@@ -458,7 +458,7 @@ function TradesPanel() {
             </div>
 
             {picked.health && (
-              <section className="rounded-xl border border-xora-600/40 bg-xora-800/60 p-4 flex items-center justify-between gap-3 flex-wrap">
+              <section className="rounded-xl border border-xtinex-line bg-xtinex-ink/80 p-4 flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <div className="flex gap-2 mb-1">
                     <Badge tone={picked.health.status}>{picked.health.action}</Badge>
@@ -506,16 +506,16 @@ function PatternLibrary() {
     }).catch(() => {})
   }, [])
   return (
-    <div className="flex-1 min-h-0 flex">
-      <aside className="w-72 shrink-0 border-r border-xora-600/40 bg-xora-900 overflow-y-auto p-3 space-y-2">
+    <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+      <aside className="w-full md:w-72 max-h-[40vh] md:max-h-none shrink-0 border-b md:border-b-0 md:border-r border-xtinex-line bg-xtinex-void overflow-y-auto p-3 space-y-2">
         {patterns.map((p) => (
           <button key={p.key} onClick={() => setSelected(p)} className={`w-full text-left p-3 rounded-xl border text-sm ${
-            selected?.key === p.key ? 'bg-xora-700 border-blue-500/60' : 'bg-xora-800/80 border-xora-600/50'
+            selected?.key === p.key ? 'bg-xora-700 border-xtinex-gold/70' : 'bg-xtinex-ink/80 border-xtinex-line'
           }`}>{p.name}</button>
         ))}
       </aside>
-      <main className="flex-1 p-6 overflow-y-auto">
-        {selected ? <><h2 className="text-xl font-bold mb-2">{selected.name}</h2><p className="text-sm text-slate-300">{selected.overview}</p></> : null}
+      <main className="flex-1 bg-xtinex-black p-4 sm:p-6 overflow-y-auto">
+        {selected ? <><h2 className="text-xl font-display font-semibold tracking-wide text-xtinex-gold mb-2">{selected.name}</h2><p className="text-sm text-xtinex-muted">{selected.overview}</p></> : null}
       </main>
     </div>
   )
@@ -545,14 +545,15 @@ export default function App() {
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <header className="shrink-0 border-b border-xora-600/40 bg-xora-900/90 px-5 py-3 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+    <div className="h-full flex flex-col bg-xtinex-black text-xtinex-fg font-body">
+      <header className="shrink-0 border-b border-xtinex-line bg-xtinex-void/95 backdrop-blur px-3 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
           <div>
-            <div className="font-semibold text-sm">XORA Chart AI</div>
+            <div className="font-display font-semibold text-sm tracking-wide">XORA Chart AI</div>
+            <div className="text-[10px] text-xtinex-gold font-display tracking-[0.18em] border-b-2 border-xtinex-gold/20 pb-1">XORA BY XTINEX</div>
             <div className="text-[11px] text-slate-500">Live scan · demo trades</div>
           </div>
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 overflow-x-auto" aria-label="Primary navigation">
             {[
               ['opportunities', 'Opportunities'],
               ['trades', 'Trades'],
