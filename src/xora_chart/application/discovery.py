@@ -15,4 +15,6 @@ async def run_discovery() -> list[DiscoveredCoin]:
         quote_asset=cfg.get("quote_asset", "USDT"),
         min_quote_volume=float(cfg.get("min_quote_volume", 500_000)),
     )
-    return coins[: max(1, int(cfg.get("scan_limit", 20)))]
+    # The discover_coins function now implements the 4-group unique symbol rule
+    # and returns exactly 20 coins (5 per group) when available
+    return coins

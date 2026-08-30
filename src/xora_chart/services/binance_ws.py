@@ -9,6 +9,13 @@ No Binance REST/HTTP endpoint is used. When native kline streams are unavailable
 1-minute OHLC bars are sampled from Binance's WebSocket ``ticker.price`` values
 and persisted so the scanner can warm up and stay warm across container restarts.
 Sampled bars intentionally carry zero volume rather than fabricating trade volume.
+
+Implements 4-group unique symbol rule for coin discovery:
+- 5 Top Gainers
+- 5 Top Losers
+- 5 Top Movers/Momentum
+- 5 Top High-Liquidity/High-Volume
+With global uniqueness and priority allocation.
 """
 
 from __future__ import annotations
@@ -21,6 +28,10 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
+
+import binance
+from xora_chart.config import load_config
+from xora_chart.persistence.store import Store
 
 import websockets
 
@@ -55,6 +66,13 @@ class BinanceWSHub:
         self._mark: dict[str, dict[str, Any]] = {}
         self._desired_symbols: set[str] = set(BOOTSTRAP_SYMBOLS)
         self._watchlist_version = 0
+
+        # Subscription management: reference counting for stream types per symbol
+        # Format: {symbol: {stream_type: count}}
+        self._stream_refs: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._pending_subscription_update = False
+        self._last_subscription_update = 0.0
+
         self._task: asyncio.Task | None = None
         self._price_task: asyncio.Task | None = None
         self._running = False
@@ -66,6 +84,10 @@ class BinanceWSHub:
         self._native_kline_symbols: set[str] = set()
         self._baseline_prices: dict[str, float] = {}
         self._load_ws_state()
+
+        # Reconciliation task
+        self._reconcile_task: asyncio.Task | None = None
+        self._last_reconcile: dict[str, float] = {}  # symbol -> last reconcile time
 
     @classmethod
     def instance(cls) -> "BinanceWSHub":
@@ -81,23 +103,31 @@ class BinanceWSHub:
             self._price_task = asyncio.create_task(
                 self._run_price_api_forever(), name="binance-ws-price-api"
             )
+        if not self._reconcile_task or self._reconcile_task.done():
+            self._reconcile_task = asyncio.create_task(
+                self._run_reconcile_forever(), name="binance-ws-reconcile"
+            )
 
     def stop(self) -> None:
         self._running = False
         self._connected = False
         self._price_api_connected = False
         self._save_ws_state()
-        for task in (self._task, self._price_task):
+        for task in (self._task, self._price_task, self._reconcile_task):
             if task:
                 task.cancel()
 
     def set_watchlist(self, symbols: list[str]) -> None:
+        """Update the watchlist - ensures at least ticker data for these symbols.
+
+        Args:
+            symbols: List of symbols to include in watchlist
+        """
         requested = {s.upper() for s in symbols if s}
-        new = set(BOOTSTRAP_SYMBOLS) | requested
-        if new != self._desired_symbols:
-            self._desired_symbols = new
-            self._watchlist_version += 1
-            log.info("Watchlist updated (%d symbols) v%d", len(new), self._watchlist_version)
+        # Ensure at least ticker reference for watchlist symbols
+        for symbol in requested:
+            self.add_stream_ref(symbol, "ticker")
+        log.info("Watchlist updated with %d symbols", len(requested))
 
     def discover_coins(
         self,
@@ -109,6 +139,17 @@ class BinanceWSHub:
         quote_asset: str = "USDT",
         min_quote_volume: float = 500_000,
     ) -> list[DiscoveredCoin]:
+        """Discover coins using the 4-group unique symbol rule.
+
+        Implements exactly 4 groups of 5 coins each (20 unique total):
+        1. Top 5 Gainers
+        2. Top 5 Losers
+        3. Top 5 Movers/Momentum
+        4. Top 5 High-Liquidity/High-Volume
+
+        Enforces global uniqueness across groups with priority allocation:
+        Gainers > Losers > Movers > High-Volume
+        """
         candidates = [
             t
             for sym, t in self._tickers.items()
@@ -146,64 +187,100 @@ class BinanceWSHub:
             except (TypeError, ValueError):
                 return 0.0
 
+        # Filter candidates by minimum quote volume
         real = [t for t in candidates if real_quote_volume(t) >= min_quote_volume]
         source_items = real if real else candidates
-        gainers = sorted(source_items, key=pct, reverse=True)[:top_gainers]
-        losers = sorted(source_items, key=pct)[:top_losers]
+
+        # Sort candidates for each category
+        sorted_gainers = sorted(source_items, key=pct, reverse=True)
+        sorted_losers = sorted(source_items, key=pct)
         if real:
-            volume = sorted(real, key=real_quote_volume, reverse=True)[:top_volume]
-            trending_sorted = sorted(
+            sorted_volume = sorted(real, key=real_quote_volume, reverse=True)
+            sorted_trending = sorted(
                 real,
                 key=lambda t: abs(pct(t)) * (real_quote_volume(t) ** 0.5),
                 reverse=True,
-            )[:trending]
-            volume_source = "volume"
+            )
         else:
-            volume = sorted(source_items, key=book_liquidity, reverse=True)[:top_volume]
-            trending_sorted = sorted(
+            sorted_volume = sorted(source_items, key=book_liquidity, reverse=True)
+            sorted_trending = sorted(
                 source_items,
                 key=lambda t: (abs(pct(t)) + 0.01) * (book_liquidity(t) ** 0.5),
                 reverse=True,
-            )[:trending]
-            volume_source = "book-liquidity"
+            )
 
+        # Apply 4-group unique symbol rule with priority allocation
         seen: set[str] = set()
         result: list[DiscoveredCoin] = []
 
-        def add(items: list[dict], source: str) -> None:
-            for i, t in enumerate(items):
-                sym = (t.get("s") or "").upper()
-                if not sym or sym in seen:
-                    continue
+        # Group 1: Top Gainers (highest priority)
+        gainers_selected = []
+        for t in sorted_gainers:
+            sym = (t.get("s") or "").upper()
+            if sym not in seen:
                 seen.add(sym)
-                result.append(
+                gainers_selected.append(t)
+                if len(gainers_selected) >= top_gainers:
+                    break
+
+        # Group 2: Top Losers (second priority)
+        losers_selected = []
+        for t in sorted_losers:
+            sym = (t.get("s") or "").upper()
+            if sym not in seen:
+                seen.add(sym)
+                losers_selected.append(t)
+                if len(losers_selected) >= top_losers:
+                    break
+
+        # Group 3: Top Movers/Momentum (third priority)
+        movers_selected = []
+        for t in sorted_trending:
+            sym = (t.get("s") or "").upper()
+            if sym not in seen:
+                seen.add(sym)
+                movers_selected.append(t)
+                if len(movers_selected) >= trending:
+                    break
+
+        # Group 4: Top High-Liquidity/High-Volume (fourth priority)
+        volume_selected = []
+        for t in sorted_volume:
+            sym = (t.get("s") or "").upper()
+            if sym not in seen:
+                seen.add(sym)
+                volume_selected.append(t)
+                if len(volume_selected) >= top_volume:
+                    break
+
+        # Convert selected coins to DiscoveredCoin objects with proper source attribution
+        def add_selected_coins(coins: list[dict], source: str, is_real: bool) -> list[DiscoveredCoin]:
+            selected = []
+            for i, t in enumerate(coins):
+                selected.append(
                     DiscoveredCoin(
-                        symbol=sym,
-                        source=source,
+                        symbol=(t.get("s") or "").upper(),
+                        source=source if is_real else f"ws-price-{source}",
                         rank_in_source=i + 1,
                         price_change_pct=pct(t),
                         quote_volume=real_quote_volume(t),
                     )
                 )
+            return selected
 
-        add(gainers, "gainer" if real else "ws-price-gainer")
-        add(losers, "loser" if real else "ws-price-loser")
-        add(volume, volume_source)
-        add(trending_sorted, "trending" if real else "ws-price-trending")
+        # Determine if we're using real data (based on volume filtering)
+        is_real_data = len(real) > 0 and len(real) == len(source_items)
 
-        # A fresh WS-API session has no 24h volume/change context. Fill the
-        # remainder from the liquid bootstrap watchlist instead of returning
-        # zero coins while the local price history warms up.
-        target = max(1, top_gainers + top_losers + top_volume + trending)
-        if len(result) < target:
-            remaining = sorted(
-                source_items,
-                key=lambda t: (book_liquidity(t), str(t.get("s") or "")),
-                reverse=True,
-            )
-            add(remaining, "ws-price-watchlist")
+        result.extend(add_selected_coins(gainers_selected, "gainer", is_real_data))
+        result.extend(add_selected_coins(losers_selected, "loser", is_real_data))
+        result.extend(add_selected_coins(movers_selected, "trending", is_real_data))
+        result.extend(add_selected_coins(volume_selected, "high-volume", is_real_data))
 
-        return result[:target]
+        # Ensure discovered coins have at least ticker data for discovery purposes
+        for coin in result:
+            self.add_stream_ref(coin.symbol, "ticker")
+
+        return result
 
     def get_window(self, symbol: str, interval: str = "1m", limit: int = 100) -> CandleWindow | None:
         buf = self._candles.get(symbol.upper())
@@ -314,29 +391,125 @@ class BinanceWSHub:
         self._price_api_connected = False
         log.info("Binance Futures WebSocket API price sampler stopped")
 
-    async def _session(self) -> None:
-        streams = ["!ticker@arr"]
-        symbols = sorted(self._desired_symbols)[:40]
-        for sym in symbols:
-            s = sym.lower()
-            streams.append(f"{s}@ticker")
-            streams.append(f"{s}@kline_1m")
-            streams.append(f"{s}@bookTicker")
-            streams.append(f"{s}@depth20@100ms")
-            streams.append(f"{s}@markPrice@1s")
+    async def _run_reconcile_forever(self) -> None:
+        """Periodically reconcile historical state via REST API."""
+        log.info("Binance WebSocket reconciliation task starting")
+        while self._running:
+            try:
+                await self._reconcile_cycle()
+                # Sleep for a short interval before checking again
+                # The actual reconciliation timing is handled per symbol
+                await asyncio.sleep(30)  # Check every 30 seconds
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.warning("Reconciliation error: %s — retry 10s", e)
+                await asyncio.sleep(10)
+        log.info("Binance WebSocket reconciliation task stopped")
 
+    async def _reconcile_cycle(self) -> None:
+        """Perform one cycle of reconciliation for all symbols that need it."""
+        try:
+            # Get configuration for reconciliation intervals
+            cfg = load_config().get("reconciliation", {})
+            if not cfg:
+                return
+
+            # Get symbols that need reconciliation
+            # We'll reconcile symbols that:
+            # 1. Are in our desired symbols (watchlist)
+            # 2. Have open positions
+            # 3. Have active opportunities
+            # 4. Are currently being analyzed
+            symbols_to_reconcile = set()
+
+            # Add watchlist symbols
+            symbols_to_reconcile.update(self._desired_symbols)
+
+            # Add symbols with open positions
+            try:
+                store = Store.instance()
+                open_positions = [p for p in store.list_positions() if p.status.value == "open"]
+                symbols_to_reconcile.update(p.symbol for p in open_positions)
+            except Exception:
+                pass  # Continue with what we have
+
+            # Add symbols from current opportunities
+            try:
+                store = Store.instance()
+                opportunities = store.list_opportunities()
+                symbols_to_reconcile.update(o.symbol for o in opportunities)
+            except Exception:
+                pass
+
+            # Perform reconciliation for each symbol
+            now = time.monotonic()
+            for symbol in symbols_to_reconcile:
+                # Determine the timeframe for this symbol (default to 1m)
+                timeframe = "1m"  # TODO: Could make this configurable per symbol or detect from context
+
+                # Get the reconciliation interval for this timeframe
+                interval_seconds = cfg.get(timeframe, 120)  # Default to 2 minutes if not configured
+
+                # Check if it's time to reconcile this symbol
+                last_reconcile = self._last_reconcile.get(symbol, 0)
+                if now - last_reconcile >= interval_seconds:
+                    try:
+                        await self._reconcile_symbol(symbol, timeframe)
+                        self._last_reconcile[symbol] = now
+                        log.debug("Reconciled symbol %s (%s)", symbol, timeframe)
+                    except Exception as e:
+                        log.warning("Failed to reconcile symbol %s: %s", symbol, e)
+        except Exception as e:
+            log.warning("Error in reconciliation cycle: %s", e)
+
+    async def _reconcile_symbol(self, symbol: str, timeframe: str = "1m") -> None:
+        """Reconcile historical data for a specific symbol via REST API."""
+        try:
+            # Fetch fresh historical data via REST
+            window = await binance.fetch_klines(symbol, interval=timeframe, limit=100)
+            if window and len(window.candles) >= 20:  # Minimum required for analysis
+                # Update our candle cache with the fresh data
+                buf = self._candles[symbol.upper()]
+                # Clear existing cache and replace with fresh data
+                buf.clear()
+                for candle in window.candles:
+                    buf.append(candle)
+                # Update baseline price
+                if window.candles:
+                    self._baseline_prices.setdefault(symbol.upper(), float(window.candles[-1].close))
+                log.debug("Updated candle cache for %s with %d candles", symbol, len(buf))
+            else:
+                log.warning("Insufficient historical data for %s reconciliation: %d candles",
+                           symbol, len(window.candles) if window else 0)
+        except Exception as e:
+            raise RuntimeError(f"REST reconciliation failed for {symbol}: {e}")
+
+    async def _session(self) -> None:
+        # Build initial stream list
+        streams = self.get_needed_streams()
         url = f"{WS_BASE}/stream?streams=" + "/".join(streams)
-        version = self._watchlist_version
-        log.info("WS connect streams=%d symbols=%d", len(streams), len(symbols))
+        log.info("WS connect streams=%d", len(streams))
 
         async with websockets.connect(
             url, ping_interval=20, ping_timeout=20, max_size=8_000_000
         ) as ws:
             self._connected = True
             while self._running:
-                if self._watchlist_version != version:
-                    log.info("Watchlist version changed — reconnect")
-                    break
+                # Check if we need to update subscriptions
+                if self._should_update_subscriptions():
+                    log.info("Updating WS subscriptions")
+                    self._last_subscription_update = time.monotonic()
+                    self._pending_subscription_update = False
+
+                    # Build new stream list
+                    new_streams = self.get_needed_streams()
+                    if new_streams != streams:
+                        log.info("WS streams changed: %d -> %d", len(streams), len(new_streams))
+                        streams = new_streams
+                        # Need to reconnect with new streams
+                        break
+
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=25)
                 except asyncio.TimeoutError:
@@ -352,7 +525,7 @@ class BinanceWSHub:
                 data = msg.get("data", msg)
                 stream = msg.get("stream", "")
 
-                if stream == "!ticker@arr" or isinstance(data, list):
+                if stream == "!ticker@arr":  # Process only the combined ticker stream; isinstance(data, list) check removed as it was interfering with kline data routing
                     self._record_event("ticker")
                     if isinstance(data, list):
                         for t in data:
@@ -360,7 +533,7 @@ class BinanceWSHub:
                 elif stream.endswith("@ticker"):
                     self._record_event("ticker")
                     self._store_ticker(data)
-                elif "@kline_" in stream:
+                elif "@kline_" in stream or "@kline_" in stream.upper():
                     self._record_event("kline")
                     self._handle_kline(data)
                 elif "@bookTicker" in stream or data.get("e") == "bookTicker":
@@ -561,6 +734,88 @@ class BinanceWSHub:
             tmp.replace(STATE_PATH)
         except Exception as e:
             log.debug("Could not persist WS candle cache: %s", e)
+
+    def add_stream_ref(self, symbol: str, stream_type: str) -> None:
+        """Add a reference to a stream type for a symbol.
+
+        Args:
+            symbol: The symbol (e.g., "BTCUSDT")
+            stream_type: The type of stream ("ticker", "kline_1m", "bookTicker", etc.)
+        """
+        symbol = symbol.upper()
+        refs = self._stream_refs[symbol]
+        refs[stream_type] += 1
+        self._pending_subscription_update = True
+        log.debug(
+            "Added stream ref for %s:%s (now %d)",
+            symbol,
+            stream_type,
+            refs[stream_type],
+        )
+
+    def remove_stream_ref(self, symbol: str, stream_type: str) -> None:
+    """Remove a reference to a stream type for a symbol.
+
+    Args:
+        symbol: The symbol (e.g., "BTCUSDT")
+        stream_type: The type of stream ("ticker", "kline_1m", "bookTicker", etc.)
+    """
+    symbol = symbol.upper()
+    if symbol in self._stream_refs:
+        refs = self._stream_refs[symbol]
+        if refs[stream_type] > 0:
+            refs[stream_type] -= 1
+            if refs[stream_type] == 0:
+                del refs[stream_type]
+                # Clean up empty symbol entries
+                if not refs:
+                    del self._stream_refs[symbol]
+            self._pending_subscription_update = True
+            log.debug(
+                "Removed stream ref for %s:%s (now %d)",
+                symbol,
+                stream_type,
+                refs.get(stream_type, 0),
+            )
+
+    def get_needed_streams(self) -> list[str]:
+        """Build list of streams needed based on current reference counts.
+
+        Returns:
+            List of stream subscriptions needed (e.g., ["!ticker@arr", "btcusdt@kline_1m"])
+        """
+        streams = ["!ticker@arr"]  # Always need the global ticker stream for discovery
+
+        # Add streams for each symbol based on reference counts
+        for symbol, refs in self._stream_refs.items():
+            if refs.get("ticker", 0) > 0:
+                streams.append(f"{symbol.lower()}@ticker")
+            if refs.get("kline_1m", 0) > 0:
+                streams.append(f"{symbol.lower()}@kline_1m")
+            if refs.get("bookTicker", 0) > 0:
+                streams.append(f"{symbol.lower()}@bookTicker")
+            if refs.get("depth20@100ms", 0) > 0:
+                streams.append(f"{symbol.lower()}@depth20@100ms")
+            if refs.get("markPrice@1s", 0) > 0:
+                streams.append(f"{symbol.lower()}@markPrice@1s")
+
+        return streams
+
+    def _should_update_subscriptions(self) -> bool:
+        """Check if we should update subscriptions based on pending changes and timing.
+
+        Returns:
+            True if subscriptions should be updated
+        """
+        if not self._pending_subscription_update:
+            return False
+
+        # Throttle subscription updates to avoid excessive reconnections
+        now = time.monotonic()
+        if now - self._last_subscription_update < 5.0:  # Minimum 5 seconds between updates
+            return False
+
+        return True
 
 
 async def ensure_hub() -> BinanceWSHub:

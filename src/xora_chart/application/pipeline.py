@@ -30,12 +30,35 @@ async def run_cycle(
     log.info("Cycle %s started (auto_trade=%s)", result.cycle_id, store.auto_trade_enabled())
 
     # Close demo trades that already hit SL / TP before opening more.
+    # Add stream references for all open position symbols
+    try:
+        all_positions = store.list_positions()
+        hub = BinanceWSHub.instance()
+        open_positions = [p for p in all_positions if p.status.value == "open"]
+        for pos in open_positions:
+            hub.add_stream_ref(pos.symbol, "ticker")
+            hub.add_stream_ref(pos.symbol, "markPrice@1s")
+            # Note: Positions may also need kline data for SL/TP checking depending on implementation
+    except Exception as e:
+        log.warning("Failed to get open positions for stream management: %s", e)
+
     try:
         closed = manage_open_positions(store)
         result.positions_closed = len(closed)
     except Exception as e:
         log.warning("Position manage failed: %s", e)
         result.errors.append(f"manage: {e}")
+    finally:
+        # Remove stream references for open position symbols
+        try:
+            all_positions = store.list_positions()
+            hub = BinanceWSHub.instance()
+            open_positions = [p for p in all_positions if p.status.value == "open"]
+            for pos in open_positions:
+                hub.remove_stream_ref(pos.symbol, "ticker")
+                hub.remove_stream_ref(pos.symbol, "markPrice@1s")
+        except Exception as e:
+            log.warning("Failed to clean up position stream references: %s", e)
 
     try:
         if coins_override is not None:
@@ -78,6 +101,12 @@ async def run_cycle(
     auto = store.auto_trade_enabled()
 
     for window in windows:
+        symbol = window.symbol
+        hub = BinanceWSHub.instance()
+        # Add stream references for analysis
+        hub.add_stream_ref(symbol, "kline_1m")
+        hub.add_stream_ref(symbol, "ticker")
+        hub.add_stream_ref(symbol, "markPrice@1s")
         try:
             matches = matcher.match_window(window)
             if not matches:
@@ -136,17 +165,32 @@ async def run_cycle(
             )
 
             if auto and decision.action == DecisionAction.APPROVE:
+                # Add stream references for the opportunity symbol
+                hub = BinanceWSHub.instance()
+                hub.add_stream_ref(opp.symbol, "ticker")
+                hub.add_stream_ref(opp.symbol, "markPrice@1s")
+                hub.add_stream_ref(opp.symbol, "kline_1m")
                 try:
                     pos = open_from_opportunity(opp, store=store)
                     opp.status = OpportunityStatus.TRADED
                     log.info("Auto-trade opened %s pos=%s", opp.symbol, pos.id[:8])
                 except RuntimeError as e:
                     log.info("Auto-trade skipped %s: %s", opp.symbol, e)
+                finally:
+                    # Remove stream references for the opportunity symbol
+                    hub.remove_stream_ref(opp.symbol, "ticker")
+                    hub.remove_stream_ref(opp.symbol, "markPrice@1s")
+                    hub.remove_stream_ref(opp.symbol, "kline_1m")
 
             opportunities.append(opp)
         except Exception as e:
             log.warning("Symbol %s failed: %s", window.symbol, e)
             result.errors.append(f"{window.symbol}: {e}")
+        finally:
+            # Remove stream references when done processing this symbol
+            hub.remove_stream_ref(symbol, "kline_1m")
+            hub.remove_stream_ref(symbol, "ticker")
+            hub.remove_stream_ref(symbol, "markPrice@1s")
 
     ranked = ranking.rank_opportunities(opportunities)
     result.opportunities = ranked

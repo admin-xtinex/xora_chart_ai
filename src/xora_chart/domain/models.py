@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, List, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -146,6 +146,8 @@ class Position(BaseModel):
     closed_at: datetime | None = None
     exit_price: float | None = None
     realized_pnl: float | None = None
+    realized_pnl_percent: float | None = None
+    duration_seconds: int | None = None
 
 
 class Opportunity(BaseModel):
@@ -167,6 +169,16 @@ class Opportunity(BaseModel):
 
     rank_score: float = 0.0
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    detection_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    source_cohort: str | None = None
+    pattern_match_percent: float = 0.0
+    market_evidence_score: float = 0.0
+    decision_rationale: str | None = None
+    missing_confirmations: list[str] = Field(default_factory=list)
+    invalidation_price: float | None = None
+    targets: list[float] = Field(default_factory=list)
+    freshness_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    is_expired: bool = False
     cycle_id: str | None = None
 
     candle_count: int = 0
@@ -182,3 +194,63 @@ class CycleResult(BaseModel):
     opportunities: list[Opportunity] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     positions_closed: int = 0
+
+
+class TradeEvent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    opportunity_id: str
+    position_id: str | None = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    event_type: str  # DETECTED, PATTERN_VERIFIED, DECISION_WAIT, DECISION_APPROVE, ENTRY, TP1_REACHED, EXIT, etc.
+    description: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class XORATrade(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    opportunity_id: str
+    position_id: str | None = None
+
+    # Trade identification
+    symbol: str
+    side: Side
+    pattern: str
+    timeframe: str
+
+    # Detection info
+    detected_at: datetime
+    source_cohort: str
+    pattern_match_percent: float
+    market_evidence_score: float
+
+    # Decision info
+    decision_action: DecisionAction
+    decision_rationale: str
+
+    # Trade plan
+    entry_price: float
+    stop_loss_price: float
+    take_profit_prices: List[float] = Field(default_factory=list)
+    risk_reward: float
+
+    # Execution
+    executed_at: datetime | None = None
+    actual_entry_price: float | None = None
+    quantity: float
+    leverage: int
+
+    # Exit
+    exited_at: datetime | None = None
+    exit_price: float | None = None
+    exit_reason: str | None = None
+
+    # Results
+    realized_pnl: float | None = None
+    realized_pnl_percent: float | None = None
+    duration_seconds: int | None = None
+
+    # Status
+    status: PositionStatus = PositionStatus.OPEN  # OPEN, CLOSED, CANCELLED
+
+    # Audit trail
+    events: List[TradeEvent] = Field(default_factory=list)

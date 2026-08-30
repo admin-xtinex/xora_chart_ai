@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from xora_chart.config import load_config
-from xora_chart.domain.models import CycleResult, Opportunity, Position
+from xora_chart.domain.models import CycleResult, Opportunity, Position, TradeEvent, XORATrade
 
 
 class Store:
@@ -32,6 +32,10 @@ class Store:
         self._opp_order: deque[str] = deque()
         self._positions: dict[str, Position] = {}
         self._position_order: deque[str] = deque(maxlen=self._max_positions)
+        self._trades: dict[str, XORATrade] = {}
+        self._trade_order: deque[str] = deque()
+        self._events: dict[str, TradeEvent] = {}
+        self._event_order: deque[str] = deque()
         self._latest_cycle: CycleResult | None = None
         self._settings: dict[str, Any] = {
             "auto_trade": bool(trade_cfg.get("auto_trade", False)),
@@ -68,6 +72,18 @@ class Store:
             positions = positions[: self._max_positions]
             self._positions = {p.id: p for p in positions}
             self._position_order = deque([p.id for p in positions], maxlen=self._max_positions)
+
+            trades = [XORATrade.model_validate(x) for x in raw.get("trades") or []]
+            trades = trades[: self._max_positions]  # Reuse same limit as positions for now
+            self._trades = {t.id: t for t in trades}
+            self._trade_order = deque([t.id for t in trades], maxlen=self._max_positions)
+
+            events = [TradeEvent.model_validate(x) for x in raw.get("events") or []]
+            # No specific limit for events, but we'll cap at a reasonable number
+            max_events = 1000
+            events = events[:max_events]
+            self._events = {e.id: e for e in events}
+            self._event_order = deque([e.id for e in events], maxlen=max_events)
         except Exception:
             # Corrupt/old state must never stop the scanner from booting.
             return
@@ -81,6 +97,8 @@ class Store:
                     "cycles": [c.model_dump(mode="json") for c in self._cycles],
                     "opportunities": [o.model_dump(mode="json") for o in self.list_opportunities(self._max_opps)],
                     "positions": [p.model_dump(mode="json") for p in self.list_positions()],
+                    "trades": [t.model_dump(mode="json") for t in self.list_trades(self._max_positions)],
+                    "events": [e.model_dump(mode="json") for e in self.list_events(1000)],
                 }
                 tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
                 tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -166,3 +184,49 @@ class Store:
 
     def list_positions(self) -> list[Position]:
         return [self._positions[i] for i in self._position_order if i in self._positions]
+
+    def save_trade(self, trade: XORATrade) -> None:
+        if trade.id not in self._trades:
+            self._trade_order.appendleft(trade.id)
+        self._trades[trade.id] = trade
+        self._persist()
+
+    def get_trade(self, trade_id: str) -> XORATrade | None:
+        return self._trades.get(trade_id)
+
+    def list_trades(self, limit: int = 50) -> list[XORATrade]:
+        items: list[XORATrade] = []
+        seen: set[str] = set()
+        for trade_id in self._trade_order:
+            if trade_id in seen:
+                continue
+            seen.add(trade_id)
+            trade = self._trades.get(trade_id)
+            if trade:
+                items.append(trade)
+            if len(items) >= limit:
+                break
+        return items
+
+    def save_event(self, event: TradeEvent) -> None:
+        if event.id not in self._events:
+            self._event_order.appendleft(event.id)
+        self._events[event.id] = event
+        self._persist()
+
+    def get_event(self, event_id: str) -> TradeEvent | None:
+        return self._events.get(event_id)
+
+    def list_events(self, limit: int = 50) -> list[TradeEvent]:
+        items: list[TradeEvent] = []
+        seen: set[str] = set()
+        for event_id in self._event_order:
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            event = self._events.get(event_id)
+            if event:
+                items.append(event)
+            if len(items) >= limit:
+                break
+        return items
