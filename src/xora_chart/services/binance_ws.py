@@ -751,32 +751,32 @@ class BinanceWSHub:
             symbol,
             stream_type,
             refs[stream_type],
-        )
+        )  # MARKER
 
     def remove_stream_ref(self, symbol: str, stream_type: str) -> None:
-    """Remove a reference to a stream type for a symbol.
+        """Remove a reference to a stream type for a symbol.
 
-    Args:
-        symbol: The symbol (e.g., "BTCUSDT")
-        stream_type: The type of stream ("ticker", "kline_1m", "bookTicker", etc.)
-    """
-    symbol = symbol.upper()
-    if symbol in self._stream_refs:
-        refs = self._stream_refs[symbol]
-        if refs[stream_type] > 0:
-            refs[stream_type] -= 1
-            if refs[stream_type] == 0:
-                del refs[stream_type]
-                # Clean up empty symbol entries
-                if not refs:
-                    del self._stream_refs[symbol]
-            self._pending_subscription_update = True
-            log.debug(
-                "Removed stream ref for %s:%s (now %d)",
-                symbol,
-                stream_type,
-                refs.get(stream_type, 0),
-            )
+        Args:
+            symbol: The symbol (e.g., "BTCUSDT")
+            stream_type: The type of stream ("ticker", "kline_1m", "bookTicker", etc.)
+        """
+        symbol = symbol.upper()
+        if symbol in self._stream_refs:
+            refs = self._stream_refs[symbol]
+            if refs[stream_type] > 0:
+                refs[stream_type] -= 1
+                if refs[stream_type] == 0:
+                    del refs[stream_type]
+                    # Clean up empty symbol entries
+                    if not refs:
+                        del self._stream_refs[symbol]
+                self._pending_subscription_update = True
+                log.debug(
+                    "Removed stream ref for %s:%s (now %d)",
+                    symbol,
+                    stream_type,
+                    refs.get(stream_type, 0),
+                )
 
     def get_needed_streams(self) -> list[str]:
         """Build list of streams needed based on current reference counts.
