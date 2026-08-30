@@ -18,7 +18,7 @@ permissions:
 jobs:
   pipeline:
     name: Test and deploy on production VM
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     environment: production
     timeout-minutes: 40
 
