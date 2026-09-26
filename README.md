@@ -37,6 +37,9 @@ docker compose up --build
 
 First scan may need a short **WS warm-up** while candle buffers fill.
 
+Discovery scans four globally unique cohorts of 10 coins each: gainers,
+losers, momentum movers, and high-volume candidates (40 total when available).
+
 ---
 
 ## Android APK
@@ -62,3 +65,23 @@ curl http://localhost:8030/api/v1/positions/history/summary
 ```
 
 Trade mode: `XORA_TRADE_MODE=demo` (default).
+New demo positions use a fixed **10 USDT margin at 10x leverage** (100 USDT notional).
+The current B1 deployment cap is **40 concurrent demo positions**, configurable
+with `XORA_MAX_OPEN_POSITIONS`.
+
+## Optional LLM explanations
+
+Opportunity explanations can use Groq first and automatically fall back to
+Gemini when Groq is unavailable or rate-limited. The LLM is read-only: the
+deterministic Decision and Trade engines remain the only execution gate.
+
+```bash
+XORA_LLM_ENABLED=true
+XORA_LLM_PROVIDERS=groq,gemini
+GROQ_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+Keys belong on the backend only. Explanations are requested on demand through
+the WebSocket action `opportunity.explain`, cached for 15 minutes by default,
+and limited to five uncached requests per client per minute.

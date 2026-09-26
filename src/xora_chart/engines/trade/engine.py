@@ -23,21 +23,22 @@ def _mode() -> TradeMode:
     return TradeMode.LIVE if m == "live" else TradeMode.DEMO
 
 
-def _sizing(
-    entry: float, stop: float, equity: float, risk_pct: float, leverage: int, max_margin: float
-) -> tuple[float, float]:
-    risk_amount = equity * (risk_pct / 100.0)
-    stop_dist = abs(entry - stop)
-    if stop_dist <= 0 or entry <= 0:
+def configured_max_open_positions() -> int:
+    cfg = load_config().get("trade", {})
+    raw = os.getenv("XORA_MAX_OPEN_POSITIONS", str(cfg.get("max_open_positions", 40)))
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 40
+
+
+def _sizing(entry: float, margin: float, leverage: int) -> tuple[float, float]:
+    """Return quantity for a fixed isolated demo margin and leverage."""
+    if entry <= 0 or margin <= 0 or leverage <= 0:
         return 0.0, 0.0
-    qty = risk_amount / stop_dist
-    # Tight stops make risk-based size explode; never commit more margin than
-    # one position's share of the account.
-    max_qty = max_margin * max(leverage, 1) / entry
-    qty = min(qty, max_qty)
-    notional = qty * entry
-    margin = notional / max(leverage, 1)
-    return round(qty, 6), round(margin, 4)
+    notional = margin * leverage
+    qty = notional / entry
+    return round(qty, 8), round(margin, 4)
 
 
 def _last_price(symbol: str) -> float | None:
@@ -75,19 +76,18 @@ def open_position(
     if mode == TradeMode.LIVE and not cfg.get("live_enabled", False):
         raise RuntimeError("Live trading disabled. Set trade.live_enabled=true and XORA_TRADE_MODE=live")
 
-    equity = float(cfg.get("demo_equity", 10_000))
-    risk_pct = float(cfg.get("risk_percent", 0.5))
-    max_lev = int(cfg.get("max_leverage", 5))
-    leverage = min(int(cfg.get("default_leverage", 3)), max_lev)
+    margin_per_trade = float(cfg.get("margin_per_trade", 10))
+    max_lev = int(cfg.get("max_leverage", 10))
+    leverage = min(int(cfg.get("default_leverage", 10)), max_lev)
 
     open_pos = [p for p in store.list_positions() if p.status == PositionStatus.OPEN]
-    max_pos = int(cfg.get("max_open_positions", 5))
+    max_pos = configured_max_open_positions()
     if len(open_pos) >= max_pos:
         raise RuntimeError(f"Max open positions reached ({max_pos})")
     if any(p.symbol == symbol and p.status == PositionStatus.OPEN for p in open_pos):
         raise RuntimeError(f"Already open on {symbol}")
 
-    qty, margin = _sizing(setup.entry, setup.stop_loss, equity, risk_pct, leverage, equity / max(max_pos, 1))
+    qty, margin = _sizing(setup.entry, margin_per_trade, leverage)
     if qty <= 0:
         raise RuntimeError("Invalid position size")
 
@@ -237,7 +237,15 @@ def open_position(
     )
     store.save_event(entry_event)
 
-    log.info("DEMO open %s %s qty=%s lev=%sx", pos.side.value, symbol, qty, leverage)
+    log.info(
+        "DEMO open %s %s qty=%s margin=%s notional=%s lev=%sx",
+        pos.side.value,
+        symbol,
+        qty,
+        margin,
+        round(margin * leverage, 4),
+        leverage,
+    )
     return pos
 
 

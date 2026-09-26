@@ -3,11 +3,11 @@ cycle:
   enabled: true
 
 discovery:
-  top_gainers: 5
-  top_losers: 5
-  top_volume: 5
-  trending: 5
-  scan_limit: 20
+  top_gainers: 10
+  top_losers: 10
+  top_volume: 10
+  trending: 10
+  scan_limit: 40
   quote_asset: USDT
   min_quote_volume: 500000
 
@@ -45,11 +45,10 @@ trade:
   mode: demo
   live_enabled: false
   auto_trade: false
-  demo_equity: 10000
-  risk_percent: 0.5
-  default_leverage: 3
-  max_leverage: 5
-  max_open_positions: 5
+  margin_per_trade: 10
+  default_leverage: 10
+  max_leverage: 10
+  max_open_positions: 40
   default_rr_targets: [1.5, 2.5, 3.5]
   min_risk_reward: 1.5
 

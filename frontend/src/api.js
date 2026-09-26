@@ -104,11 +104,13 @@ async function mapLimit(items, limit, worker) {
 export function fetchPatterns({ direction, type } = {}) { return rpc('patterns.list', { direction, type }) }
 export function fetchHealth() { return rpc('health') }
 export function fetchOpportunities(limit = 30) { return rpc('opportunities.list', { limit }) }
+export function explainOpportunity(opportunityId) { return rpc('opportunity.explain', { opportunity_id: opportunityId }, 45000) }
 export function fetchScanPlan() { return rpc('cycle.plan') }
 
 export async function runCycle(coinsOverride = null) {
   const plan = Array.isArray(coinsOverride) ? { coins: coinsOverride } : await fetchScanPlan()
-  const coins = Array.isArray(plan?.coins) ? plan.coins.slice(0, 20) : []
+  const scanLimit = Math.max(1, Number(plan?.scan_limit || 40))
+  const coins = Array.isArray(plan?.coins) ? plan.coins.slice(0, scanLimit) : []
   if (!coins.length) throw new Error('No live WebSocket coins are available for scanning yet')
 
   const histories = {}

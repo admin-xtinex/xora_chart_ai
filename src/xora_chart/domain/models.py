@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 from uuid import uuid4
 
@@ -185,6 +185,24 @@ class Opportunity(BaseModel):
     candle_count: int = 0
     last_price: float | None = None
     candles: list[Candle] = Field(default_factory=list)
+
+
+class LLMExplanation(BaseModel):
+    """Grounded, read-only explanation generated for one opportunity."""
+
+    summary: str
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    missing_confirmations: list[str] = Field(default_factory=list)
+    educational_note: str
+
+    provider: str
+    model: str
+    cached: bool = False
+    prompt_version: str = "v1"
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CycleResult(BaseModel):

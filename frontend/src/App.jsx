@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   analyzeSymbol,
   closeTrade,
+  explainOpportunity,
   fetchHealth,
   fetchOpportunities,
   fetchPatterns,
@@ -31,6 +32,7 @@ const SCAN_GROUPS = [
   { id: 'movers', label: 'Top Movers', accent: 'violet', sources: ['trending', 'ws-price-trending'] },
   { id: 'volume', label: '24h Volume', accent: 'cyan', sources: ['high-volume', 'ws-price-high-volume', 'volume', 'book-liquidity'] },
 ]
+const COHORT_SIZE = 10
 
 function cx(...items) { return items.filter(Boolean).join(' ') }
 
@@ -136,13 +138,13 @@ function buildBuckets(coins = []) {
   const used = new Set()
   const buckets = {}
   for (const group of SCAN_GROUPS) {
-    buckets[group.id] = unique.filter((coin) => group.sources.includes(coin.source)).slice(0, 5)
+    buckets[group.id] = unique.filter((coin) => group.sources.includes(coin.source)).slice(0, COHORT_SIZE)
     buckets[group.id].forEach((coin) => used.add(coin.symbol))
   }
 
   const pool = unique.filter((coin) => !used.has(coin.symbol))
   for (const group of SCAN_GROUPS) {
-    while (buckets[group.id].length < 5 && pool.length) {
+    while (buckets[group.id].length < COHORT_SIZE && pool.length) {
       const fill = pool.shift()
       buckets[group.id].push({ ...fill, display_fill: true })
       used.add(fill.symbol)
@@ -275,7 +277,7 @@ function ScanPage({ health, onReview }) {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[.06] px-4 py-4 sm:px-5">
             <div>
               <div className="text-sm font-bold text-white">Discovery cohorts</div>
-              <div className="mt-1 text-[11px] text-slate-500">5 gainers · 5 losers · 5 movers · 5 volume candidates · globally unique</div>
+              <div className="mt-1 text-[11px] text-slate-500">10 gainers · 10 losers · 10 movers · 10 volume candidates · globally unique</div>
             </div>
             <form onSubmit={handleManual} className="flex w-full gap-2 sm:w-auto">
               <input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Analyze BTCUSDT" className="input-field min-w-0 flex-1 sm:w-48" />
@@ -289,7 +291,7 @@ function ScanPage({ health, onReview }) {
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-white">{group.label}</div>
-                    <div className="mt-0.5 text-[9px] uppercase tracking-[.14em] text-slate-600">{buckets[group.id]?.length || 0}/5 unique</div>
+                    <div className="mt-0.5 text-[9px] uppercase tracking-[.14em] text-slate-600">{buckets[group.id]?.length || 0}/{COHORT_SIZE} unique</div>
                   </div>
                   <span className={`h-2 w-2 rounded-full ${group.accent === 'emerald' ? 'bg-emerald-400' : group.accent === 'rose' ? 'bg-rose-400' : group.accent === 'violet' ? 'bg-violet-400' : 'bg-cyan-400'}`} />
                 </div>
@@ -331,6 +333,10 @@ function ScanPage({ health, onReview }) {
 function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(null)
+  const [llmExplanation, setLlmExplanation] = useState(null)
+  const [llmBusy, setLlmBusy] = useState(false)
+  const [llmError, setLlmError] = useState(null)
+  useEffect(() => { setLlmExplanation(null); setLlmError(null) }, [opp?.id])
   if (!opp) return <div className="page-scroll grid place-items-center p-8 text-slate-500">Select a coin from Scan to review it.</div>
   const match = opp.best_match || {}
   const market = opp.market_analysis
@@ -342,6 +348,13 @@ function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
   async function openPosition() {
     setBusy(true); setMessage(null)
     try { const pos = await openDemoTrade(opp.id); setMessage(`Demo position opened for ${pos.symbol}`); onTraded?.() } catch (e) { setMessage(e.message || 'Could not open position') } finally { setBusy(false) }
+  }
+
+  async function loadLlmExplanation() {
+    setLlmBusy(true); setLlmError(null)
+    try { setLlmExplanation(await explainOpportunity(opp.id)) }
+    catch (e) { setLlmError(e.message || 'AI explanation is unavailable') }
+    finally { setLlmBusy(false) }
   }
 
   return (
@@ -357,6 +370,7 @@ function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {match.pattern_key && <button onClick={() => onKnowledge(match.pattern_key)} className="btn-secondary"><Icon name="book" size={15}/>View in Knowledge</button>}
+            <button onClick={loadLlmExplanation} disabled={llmBusy || !health?.llm?.ready} title={!health?.llm?.ready ? 'Configure and enable Groq or Gemini on the backend' : 'Generate a grounded explanation'} className="btn-secondary"><Icon name="pulse" size={15}/>{llmBusy ? 'Explaining…' : 'Explain with LLM'}</button>
             {canTrade && <button onClick={openPosition} disabled={busy} className="btn-primary"><Icon name="target" size={15}/>{busy ? 'Opening…' : 'Open demo trade'}</button>}
           </div>
         </div>
@@ -375,7 +389,20 @@ function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{(market.signals || []).map((signal) => <div key={signal.name} className="analytics-card"><div className="flex justify-between gap-3 text-[10px]"><span className="text-slate-400">{signal.name}</span><span className="font-mono text-slate-300">{fmt(signal.score, 0)} · {signal.status}</span></div><div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[.05]"><div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(2, Math.min(100, Number(signal.score || 0)))}%` }} /></div></div>)}</div>
             </section>}
 
-            {analysis.summary && <section className="xora-panel rounded-2xl p-5"><div className="text-[9px] font-bold uppercase tracking-[.2em] text-slate-600">AI chart explanation</div><p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-300">{analysis.summary}</p></section>}
+            {analysis.summary && <section className="xora-panel rounded-2xl p-5"><div className="text-[9px] font-bold uppercase tracking-[.2em] text-slate-600">Deterministic chart explanation</div><p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-300">{analysis.summary}</p></section>}
+
+            {(llmExplanation || llmError) && <section className="xora-panel rounded-2xl border border-violet-400/15 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="text-[9px] font-bold uppercase tracking-[.2em] text-violet-300">LLM explanation · advisory only</div>{llmExplanation && <div className="flex gap-2"><Badge tone="violet">{llmExplanation.provider}</Badge><Badge>{llmExplanation.cached ? 'cached' : llmExplanation.model}</Badge></div>}</div>
+              {llmError ? <p className="mt-3 text-sm text-rose-300">{llmError}</p> : <div className="mt-4 space-y-4">
+                <p className="text-sm leading-7 text-slate-200">{llmExplanation.summary}</p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div><div className="section-mini-title">Evidence used</div><ul className="mt-2 space-y-2">{(llmExplanation.evidence || []).map((item) => <li key={item} className="text-xs leading-5 text-slate-400">• {item}</li>)}</ul></div>
+                  <div><div className="section-mini-title">Risks</div><ul className="mt-2 space-y-2">{(llmExplanation.risks || []).map((item) => <li key={item} className="text-xs leading-5 text-slate-400">• {item}</li>)}</ul></div>
+                </div>
+                {!!llmExplanation.missing_confirmations?.length && <div><div className="section-mini-title">Missing confirmations</div><div className="mt-2 flex flex-wrap gap-2">{llmExplanation.missing_confirmations.map((item) => <Badge key={item} tone="wait">{item}</Badge>)}</div></div>}
+                <div className="rounded-xl border border-cyan-400/10 bg-cyan-500/[.04] px-4 py-3 text-xs leading-5 text-slate-400">{llmExplanation.educational_note}</div>
+              </div>}
+            </section>}
           </div>
 
           <aside className="space-y-4">
@@ -388,7 +415,7 @@ function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
 
             <section className="xora-panel rounded-2xl p-4 sm:p-5">
               <div className="text-[9px] font-bold uppercase tracking-[.2em] text-slate-600">Decision engine</div>
-              <div className="mt-3 flex items-center gap-2">{decision?.action ? <Badge tone={decisionTone(decision.action)}>{decision.action}</Badge> : <Badge>No decision</Badge>}<span className="text-[10px] text-slate-600">{health?.trade_mode || 'demo'} mode</span></div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">{decision?.action ? <Badge tone={decisionTone(decision.action)}>{decision.action}</Badge> : <Badge>No decision</Badge>}<span className="text-[10px] text-slate-600">{health?.trade_mode || 'demo'} mode</span><span className="text-[10px] text-cyan-300">{fmt(health?.trade_margin ?? 10, 0)} USDT × {health?.trade_leverage ?? 10}x</span></div>
               <p className="mt-3 text-sm leading-6 text-slate-300">{decision?.reason || opp.ai_rationale || 'No trade decision on this structure.'}</p>
             </section>
 
@@ -405,7 +432,7 @@ function CoinReviewPage({ opp, health, onBack, onKnowledge, onTraded }) {
   )
 }
 
-function PositionsPage({ mode = 'open' }) {
+function PositionsPage({ mode = 'open', health }) {
   const [positions, setPositions] = useState([])
   const [summary, setSummary] = useState(null)
   const [picked, setPicked] = useState(null)
@@ -434,7 +461,7 @@ function PositionsPage({ mode = 'open' }) {
       <div className="mx-auto max-w-[1500px] space-y-5 p-4 sm:p-6 lg:p-8">
         <PageHeading eyebrow={active ? 'Position guardian' : 'Execution journal'} title={active ? 'Active Trades' : 'Trade History'} description={active ? 'Live demo positions with guardian health, current price, risk levels and manual close controls.' : 'Every executed trade, auto and manual, newest first. Open trades stay listed here until they close. Times shown in your local time zone.'} />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {active ? <><MetricCard label="Open positions" value={summary?.open_count ?? positions.length} detail="Currently managed" tone="cyan"/><MetricCard label="Unrealized PnL" value={fmt(summary?.open_unrealized_pnl, 2)} detail="USDT" tone={Number(summary?.open_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Max capacity" value={`${summary?.open_count || 0}/5`} detail="Engine risk cap" tone="violet"/><MetricCard label="Total trades" value={summary?.total_trades ?? '—'} detail="Open + closed" tone="blue"/></> : <><MetricCard label="Closed trades" value={summary?.closed_count ?? positions.length} detail="Journal records" tone="blue"/><MetricCard label="Realized PnL" value={fmt(summary?.total_realized_pnl, 2)} detail="USDT" tone={Number(summary?.total_realized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Win rate" value={`${fmt(summary?.win_rate, 1)}%`} detail={`${summary?.wins || 0} wins · ${summary?.losses || 0} losses`} tone="cyan"/><MetricCard label="Average PnL" value={fmt(summary?.avg_pnl, 2)} detail="Per closed trade" tone="violet"/></>}
+          {active ? <><MetricCard label="Open positions" value={summary?.open_count ?? positions.length} detail="Currently managed" tone="cyan"/><MetricCard label="Unrealized PnL" value={fmt(summary?.open_unrealized_pnl, 2)} detail="USDT" tone={Number(summary?.open_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Max capacity" value={`${summary?.open_count || 0}/${health?.max_open_positions ?? 40}`} detail="B1-safe engine cap" tone="violet"/><MetricCard label="Total trades" value={summary?.total_trades ?? '—'} detail="Open + closed" tone="blue"/></> : <><MetricCard label="Closed trades" value={summary?.closed_count ?? positions.length} detail="Journal records" tone="blue"/><MetricCard label="Realized PnL" value={fmt(summary?.total_realized_pnl, 2)} detail="USDT" tone={Number(summary?.total_realized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Win rate" value={`${fmt(summary?.win_rate, 1)}%`} detail={`${summary?.wins || 0} wins · ${summary?.losses || 0} losses`} tone="cyan"/><MetricCard label="Average PnL" value={fmt(summary?.avg_pnl, 2)} detail="Per closed trade" tone="violet"/></>}
         </div>
         {error && <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{error}</div>}
         <div className="grid min-h-[560px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -447,7 +474,7 @@ function PositionsPage({ mode = 'open' }) {
               <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[9px] uppercase tracking-[.18em] text-slate-600">{isOpen(picked) ? 'Managed position' : 'Closed trade'} · {picked.origin === 'auto' ? 'Auto-executed' : 'Manual'}</div><div className="mt-1 flex items-center gap-2"><h2 className="text-2xl font-bold text-white">{picked.symbol}</h2><Badge tone={picked.side === 'BUY' ? 'bull' : 'bear'}>{picked.side}</Badge></div><div className="mt-2 text-xs text-slate-500">Entry {fmt(picked.entry)} · {isOpen(picked) ? `Live ${fmt(picked.live_price)}` : `Exit ${fmt(picked.exit_price)}`}</div><div className="mt-1 text-[11px] text-slate-500">Opened {fmtDateTime(picked.opened_at)}{picked.closed_at && <> · Closed {fmtDateTime(picked.closed_at)} · {fmtDuration(picked.duration_seconds)}</>}</div></div><div className="text-right"><div className={cx('font-mono text-2xl font-bold', pnlClass(pnlOf(picked)))}>{fmt(pnlOf(picked), 2)}</div><div className="text-[9px] uppercase tracking-[.14em] text-slate-600">{isOpen(picked) ? 'Unrealized' : 'Realized'} PnL USDT{picked.realized_pnl_percent != null && ` · ${fmtPct(picked.realized_pnl_percent)}`}</div></div></div>
               {picked.health && isOpen(picked) &&  <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[.05] p-4"><div className="flex flex-wrap items-center gap-2"><Badge tone={picked.health.status === 'strong' ? 'approve' : picked.health.status === 'critical' ? 'reject' : 'wait'}>{picked.health.action}</Badge><span className="text-xs text-slate-500">health {picked.health.score}/100 · progress {picked.health.progress_to_tp}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{picked.health.reason}</p></div>}
               <CandleChart candles={picked.candles || []} trade={{ entry: picked.entry, stop_loss: picked.stop_loss, take_profit_1: picked.take_profit_1, take_profit_2: picked.take_profit_2, take_profit_3: picked.take_profit_3 }} height={330} />
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{[['Entry', picked.entry], ['Stop', picked.stop_loss], ['TP1', picked.take_profit_1], ['TP2', picked.take_profit_2], ['TP3', picked.take_profit_3], [isOpen(picked) ? 'Live' : 'Exit', isOpen(picked) ? picked.live_price : picked.exit_price]].map(([label, value]) => <div key={label} className="rounded-xl border border-white/[.06] p-3"><div className="text-[8px] uppercase tracking-[.14em] text-slate-600">{label}</div><div className="mt-1 font-mono text-xs font-semibold text-slate-200">{fmt(value)}</div></div>)}</div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{[['Entry', picked.entry], ['Stop', picked.stop_loss], ['TP1', picked.take_profit_1], ['TP2', picked.take_profit_2], ['TP3', picked.take_profit_3], ['Margin USDT', picked.margin_used], ['Leverage', picked.leverage != null ? `${picked.leverage}x` : null], [isOpen(picked) ? 'Live' : 'Exit', isOpen(picked) ? picked.live_price : picked.exit_price]].map(([label, value]) => <div key={label} className="rounded-xl border border-white/[.06] p-3"><div className="text-[8px] uppercase tracking-[.14em] text-slate-600">{label}</div><div className="mt-1 font-mono text-xs font-semibold text-slate-200">{typeof value === 'string' ? value : fmt(value)}</div></div>)}</div>
               {isOpen(picked) && <button onClick={() => handleClose(picked.id)} disabled={busy === picked.id} className="btn-danger">{busy === picked.id ? 'Closing…' : 'Close position manually'}</button>}
             </div>}
           </section>
@@ -552,8 +579,8 @@ export default function App() {
         <main className="min-h-0 flex-1">
           {page === 'scan' && <ScanPage health={health} onReview={openReview}/>} 
           {page === 'review' && <CoinReviewPage opp={reviewOpp} health={health} onBack={() => setPage('scan')} onKnowledge={openKnowledge} onTraded={() => setPage('active')}/>} 
-          {page === 'active' && <PositionsPage mode="open"/>}
-          {page === 'history' && <PositionsPage mode="closed"/>}
+          {page === 'active' && <PositionsPage mode="open" health={health}/>}
+          {page === 'history' && <PositionsPage mode="closed" health={health}/>}
           {page === 'knowledge' && <KnowledgePage focusKey={knowledgeKey} onFocusHandled={() => setKnowledgeKey(null)}/>} 
           {page === 'settings' && <SettingsPage health={health} autoTrade={autoTrade} onAutoTradeChange={changeAuto}/>} 
         </main>

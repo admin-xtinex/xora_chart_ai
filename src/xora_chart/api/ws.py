@@ -17,14 +17,16 @@ log = logging.getLogger(__name__)
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from xora_chart.application import discovery
+from xora_chart.application.llm_explainer import explain_opportunity, status as llm_status
 from xora_chart.application.live import enrich_position, last_price
 from xora_chart.application.pipeline import run_cycle
 from xora_chart.application.reference_visual import library_status
 from xora_chart.application.symbol_scan import analyze_symbol
 from xora_chart.catalog import list_patterns
+from xora_chart.config import load_config
 from xora_chart.domain.enums import OpportunityStatus, PositionStatus
 from xora_chart.engines.trade import close_position, list_positions, manage_open_positions
-from xora_chart.engines.trade.engine import open_from_opportunity
+from xora_chart.engines.trade.engine import configured_max_open_positions, open_from_opportunity
 from xora_chart.persistence.store import Store
 from xora_chart.services.binance_ws import BinanceWSHub, MIN_CANDLES
 
@@ -49,6 +51,9 @@ def _health() -> dict[str, Any]:
     store = Store.instance()
     latest = store.latest_cycle()
     settings = store.get_settings()
+    trade_cfg = load_config().get("trade", {})
+    max_leverage = int(trade_cfg.get("max_leverage", 10))
+    trade_leverage = min(int(trade_cfg.get("default_leverage", 10)), max_leverage)
     hub = BinanceWSHub.instance()
     ref = library_status()
     connected = hub.websocket_connected()
@@ -81,6 +86,9 @@ def _health() -> dict[str, Any]:
         "ws_events": events,
         "auto_trade": settings.get("auto_trade", False),
         "trade_mode": settings.get("trade_mode", "demo"),
+        "trade_margin": float(trade_cfg.get("margin_per_trade", 10)),
+        "trade_leverage": trade_leverage,
+        "max_open_positions": configured_max_open_positions(),
         "latest_cycle_id": latest.cycle_id if latest else None,
         "latest_cycle_errors": latest.errors[:5] if latest else [],
         "latest_opportunities": len(latest.opportunities) if latest else 0,
@@ -89,6 +97,7 @@ def _health() -> dict[str, Any]:
         "reference_gate": True,
         "reference_images": int(ref.get("count", 0)),
         "reference_ready": refs_ready,
+        "llm": llm_status(),
     }
 
 
@@ -116,7 +125,7 @@ def _positions_summary() -> dict[str, Any]:
     }
 
 
-async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
+async def _dispatch(action: str, payload: dict[str, Any], *, client_key: str = "unknown") -> Any:
     store = Store.instance()
 
     if action == "health":
@@ -125,14 +134,20 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
         return list_patterns(direction=payload.get("direction"), pattern_type=payload.get("type"))
     if action == "opportunities.list":
         return store.list_opportunities(limit=min(int(payload.get("limit", 30)), 100))
+    if action == "opportunity.explain":
+        opp = store.get_opportunity(str(payload.get("opportunity_id") or ""))
+        if not opp:
+            raise RuntimeError("Opportunity not found")
+        return await explain_opportunity(opp, client_key=client_key)
     if action == "settings.get":
         return store.get_settings()
     if action == "settings.update":
         patch = {k: v for k, v in payload.items() if k in {"auto_trade", "trade_mode"}}
         return store.update_settings(patch)
     if action == "cycle.plan":
-        coins = (await discovery.run_discovery())[:20]
-        return {"coins": coins, "count": len(coins)}
+        scan_limit = discovery.configured_scan_limit()
+        coins = (await discovery.run_discovery())[:scan_limit]
+        return {"coins": coins, "count": len(coins), "scan_limit": scan_limit}
     if action == "cycle.run":
         return await run_cycle(
             histories=payload.get("histories") or None,
@@ -384,6 +399,7 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
 @router.websocket("/ws")
 async def dashboard_ws(websocket: WebSocket) -> None:
     await websocket.accept()
+    client_key = websocket.client.host if websocket.client else "unknown"
     try:
         await websocket.send_json({"type": "ready", "data": _health()})
         while True:
@@ -392,7 +408,7 @@ async def dashboard_ws(websocket: WebSocket) -> None:
             action = str(message.get("action") or "")
             payload = message.get("payload") or {}
             try:
-                data = await _dispatch(action, payload)
+                data = await _dispatch(action, payload, client_key=client_key)
                 await websocket.send_json(
                     {"type": "response", "id": request_id, "ok": True, "data": _dump(data)}
                 )

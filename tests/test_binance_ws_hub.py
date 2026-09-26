@@ -19,6 +19,33 @@ def test_individual_ticker_is_stored():
     assert coins[0].symbol == "BTCUSDT"
 
 
+def test_discovery_returns_four_unique_ten_coin_cohorts():
+    hub = BinanceWSHub()
+    for i in range(80):
+        hub._store_ticker(
+            {
+                "s": f"T{i:03d}USDT",
+                "c": str(100 + i),
+                "P": str(i - 40),
+                "q": str(1_000_000 + i * 10_000),
+            }
+        )
+
+    coins = hub.discover_coins(
+        top_gainers=10,
+        top_losers=10,
+        trending=10,
+        top_volume=10,
+        min_quote_volume=500_000,
+    )
+
+    assert len(coins) == 40
+    assert len({coin.symbol for coin in coins}) == 40
+    assert {source: sum(coin.source == source for coin in coins) for source in {
+        "gainer", "loser", "trending", "high-volume"
+    }} == {"gainer": 10, "loser": 10, "trending": 10, "high-volume": 10}
+
+
 def test_ws_api_price_snapshot_is_stored(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(binance_ws, "STATE_PATH", tmp_path / "ws_market.json")
     hub = BinanceWSHub()

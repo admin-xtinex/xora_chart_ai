@@ -11,6 +11,17 @@ services:
       - LOG_LEVEL=INFO
       - XORA_STATE_FILE=/app/state/xora_state.json
       - XORA_WS_STATE_PATH=/app/state/ws_market.json
+      - XORA_MAX_OPEN_POSITIONS=${XORA_MAX_OPEN_POSITIONS:-40}
+      - XORA_LLM_ENABLED=${XORA_LLM_ENABLED:-false}
+      - XORA_LLM_PROVIDERS=${XORA_LLM_PROVIDERS:-groq,gemini}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - XORA_GROQ_MODEL=${XORA_GROQ_MODEL:-openai/gpt-oss-20b}
+      - XORA_GEMINI_MODEL=${XORA_GEMINI_MODEL:-gemini-2.5-flash-lite}
+      - XORA_LLM_REQUESTS_PER_MINUTE=${XORA_LLM_REQUESTS_PER_MINUTE:-5}
+      - XORA_LLM_TIMEOUT_SECONDS=${XORA_LLM_TIMEOUT_SECONDS:-20}
+      - XORA_LLM_CACHE_TTL_SECONDS=${XORA_LLM_CACHE_TTL_SECONDS:-900}
+      - XORA_LLM_PROVIDER_COOLDOWN_SECONDS=${XORA_LLM_PROVIDER_COOLDOWN_SECONDS:-60}
     volumes:
       - xora_state:/app/state
     restart: unless-stopped

@@ -11,10 +11,10 @@ and persisted so the scanner can warm up and stay warm across container restarts
 Sampled bars intentionally carry zero volume rather than fabricating trade volume.
 
 Implements 4-group unique symbol rule for coin discovery:
-- 5 Top Gainers
-- 5 Top Losers
-- 5 Top Movers/Momentum
-- 5 Top High-Liquidity/High-Volume
+- 10 Top Gainers
+- 10 Top Losers
+- 10 Top Movers/Momentum
+- 10 Top High-Liquidity/High-Volume
 With global uniqueness and priority allocation.
 """
 
@@ -131,20 +131,20 @@ class BinanceWSHub:
     def discover_coins(
         self,
         *,
-        top_gainers: int = 5,
-        top_losers: int = 5,
-        top_volume: int = 5,
-        trending: int = 5,
+        top_gainers: int = 10,
+        top_losers: int = 10,
+        top_volume: int = 10,
+        trending: int = 10,
         quote_asset: str = "USDT",
         min_quote_volume: float = 500_000,
     ) -> list[DiscoveredCoin]:
         """Discover coins using the 4-group unique symbol rule.
 
-        Implements exactly 4 groups of 5 coins each (20 unique total):
-        1. Top 5 Gainers
-        2. Top 5 Losers
-        3. Top 5 Movers/Momentum
-        4. Top 5 High-Liquidity/High-Volume
+        Implements exactly 4 groups of 10 coins each (40 unique total):
+        1. Top 10 Gainers
+        2. Top 10 Losers
+        3. Top 10 Movers/Momentum
+        4. Top 10 High-Liquidity/High-Volume
 
         Enforces global uniqueness across groups with priority allocation:
         Gainers > Losers > Movers > High-Volume

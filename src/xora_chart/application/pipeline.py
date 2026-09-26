@@ -66,9 +66,9 @@ async def run_cycle(
             coins = [
                 c if isinstance(c, DiscoveredCoin) else DiscoveredCoin.model_validate(c)
                 for c in coins_override
-            ][:20]
+            ][: discovery.configured_scan_limit()]
         else:
-            coins = (await discovery.run_discovery())[:20]
+            coins = (await discovery.run_discovery())[: discovery.configured_scan_limit()]
         result.symbols_scanned = [c.symbol for c in coins]
     except Exception as e:
         log.exception("Discovery failed")
