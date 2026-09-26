@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from xora_chart.application import discovery, explainer, market_data, matcher, ranking
+from xora_chart.application import xora_feed
 from xora_chart.application.live import last_price
 from xora_chart.domain.enums import DecisionAction, OpportunityStatus
 from xora_chart.domain.models import CycleResult, DiscoveredCoin, Opportunity
@@ -70,6 +71,7 @@ async def run_cycle(
             ][: discovery.configured_scan_limit()]
         else:
             coins = (await discovery.run_discovery())[: discovery.configured_scan_limit()]
+            xora_feed.record_groups(coins)  # read-only copy for the XORA app
         result.symbols_scanned = [c.symbol for c in coins]
     except Exception as e:
         log.exception("Discovery failed")
@@ -114,6 +116,7 @@ async def run_cycle(
             # loop free so dashboard WebSockets stay responsive during a scan.
             matches = await asyncio.to_thread(matcher.match_window, window)
             if not matches:
+                xora_feed.record_scan(window)
                 continue
 
             best = matches[0]
@@ -121,9 +124,11 @@ async def run_cycle(
                 market_analysis = await run_analysis(window, best)
             except Exception as e:
                 log.warning("analysis %s: %s", window.symbol, e)
+                xora_feed.record_scan(window, matches=matches)
                 continue
 
             decision = run_decision(window, best, market_analysis)
+            xora_feed.record_scan(window, matches=matches, analysis=market_analysis, decision=decision)
 
             if decision.action == DecisionAction.REJECT:
                 continue

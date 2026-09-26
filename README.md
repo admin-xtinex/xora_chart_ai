@@ -99,3 +99,20 @@ and user management plus global trade settings are admin-only.
 - Admins add users, reset passwords and delete users under **Settings → Users**.
 - Passwords are salted scrypt hashes; sessions last 7 days and survive restarts;
   5 failed logins lock an account for 5 minutes.
+
+## XORA app feed (read-only)
+
+The XORA trading app reads coin groups and a BUY/SELL side per coin from this
+service over the same WebSocket (`/ws`). It signs in with `auth.service`
+`{"key": XORA_SERVICE_KEY}` and can then call only:
+
+| Action | Returns |
+|--------|---------|
+| `xora.groups` | The latest scan's four groups: `gainers`, `losers`, `movers`, `high_volume` |
+| `xora.signals` `{"symbols": [...]}` | Per coin: `side` (BUY/SELL) and `source` |
+
+`source` is the first that applies: `decision` (APPROVE, then WAIT, setup) →
+`pattern` (best reference match) → `analysis` (Analysis Engine bias) →
+`fallback` (the last side given, or the last hour's change). The scan only
+records what it already computed; the feed starts no extra matching, analysis or
+market-data work and never changes decisions, opportunities or positions.

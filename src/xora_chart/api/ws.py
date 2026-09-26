@@ -8,6 +8,8 @@ live prices/order-book state come from Binance WebSockets.
 from __future__ import annotations
 
 import asyncio
+import hmac
+import os
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -399,6 +401,38 @@ async def _dispatch(action: str, payload: dict[str, Any], *, client_key: str = "
     raise RuntimeError(f"Unknown WebSocket action: {action}")
 
 
+# ── XORA app feed (read-only). The XORA server signs in with a shared service
+# key (XORA_SERVICE_KEY) and may call ONLY these actions; admins may call them
+# too, to inspect what XORA receives. Nothing here changes scans or trades.
+XORA_ACTIONS = {"xora.groups", "xora.signals"}
+SERVICE_ROLE = "service"
+MAX_XORA_SYMBOLS = 50
+
+
+def _service_key_ok(given: str) -> bool:
+    expected = os.getenv("XORA_SERVICE_KEY", "")
+    return len(expected) >= 24 and hmac.compare_digest(given.encode(), expected.encode())
+
+
+def _xora_dispatch(action: str, payload: dict[str, Any]) -> Any:
+    from xora_chart.application import xora_feed
+    from xora_chart.services.binance_ws import BinanceWSHub
+
+    if action == "xora.groups":
+        return xora_feed.groups()
+    symbols = [str(s).upper() for s in (payload.get("symbols") or []) if str(s).strip()][:MAX_XORA_SYMBOLS]
+    hub = BinanceWSHub.instance()
+    out = []
+    for sym in symbols:
+        # Only candles the hub already holds in memory - never a new fetch or subscription.
+        window = hub.get_window(sym, interval="1m", limit=60)
+        change = None
+        if window and window.candles and window.candles[0].open:
+            change = (window.candles[-1].close - window.candles[0].open) / window.candles[0].open * 100.0
+        out.append(xora_feed.signal_for(sym, hour_change_pct=change))
+    return {"signals": out}
+
+
 # Actions only admins may call; every other action needs any signed-in user.
 ADMIN_ACTIONS = {"settings.update", "watchlist.update", "users.list", "users.create", "users.delete", "users.reset_password"}
 
@@ -407,6 +441,12 @@ async def _auth_dispatch(action: str, payload: dict[str, Any], session: dict[str
     """Handle auth.* / users.* actions. Returns None when the action isn't one of them."""
     users = UserStore.instance()
     user = session.get("user")
+    if action == "auth.service":
+        if not _service_key_ok(str(payload.get("key") or "")):
+            raise AuthError("Invalid service key")
+        info = {"username": "xora-service", "role": SERVICE_ROLE}
+        session.update(user=info, token=None)
+        return {"user": info}
     if action == "auth.login":
         token, info = await asyncio.to_thread(users.login, str(payload.get("username") or ""), str(payload.get("password") or ""))
         session.update(user=info, token=token)
@@ -464,6 +504,14 @@ async def dashboard_ws(websocket: WebSocket) -> None:
             try:
                 if action in ADMIN_ACTIONS and (session.get("user") or {}).get("role") != "admin":
                     raise AuthError("Admin access required" if session.get("user") else "Please sign in")
+                role = (session.get("user") or {}).get("role")
+                if role == SERVICE_ROLE and action not in XORA_ACTIONS and not action.startswith("auth."):
+                    raise AuthError("Service access is limited to the XORA feed")
+                if action in XORA_ACTIONS:
+                    if role not in (SERVICE_ROLE, "admin"):
+                        raise AuthError("XORA feed requires the service key" if not session.get("user") else "Admin access required")
+                    await websocket.send_json({"type": "response", "id": request_id, "ok": True, "data": _dump(_xora_dispatch(action, payload))})
+                    continue
                 data = await _auth_dispatch(action, payload, session)
                 if data is None:
                     if not session.get("user"):
