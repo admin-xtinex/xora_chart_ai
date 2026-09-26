@@ -91,6 +91,10 @@ class UserStore:
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _users_path()
+        if not self._path.is_absolute():
+            # A relative path lands in the app's temporary build directory on
+            # App Service and is wiped on every restart.
+            log.warning("Users file %s is a relative path; accounts will not survive a restart", self._path)
         self._io_lock = threading.RLock()
         self._users: dict[str, dict[str, Any]] = {}
         self._sessions: dict[str, dict[str, Any]] = {}
