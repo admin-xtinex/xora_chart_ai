@@ -138,6 +138,7 @@ class Position(BaseModel):
 
     opportunity_id: str | None = None
     decision_reason: str | None = None
+    origin: str = "manual"  # "auto" when opened by the scan cycle
 
     last_price: float | None = None
     exit_reason: str | None = None

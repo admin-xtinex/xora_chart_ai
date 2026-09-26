@@ -14,6 +14,7 @@ from xora_chart.engines.analysis import run_analysis
 from xora_chart.engines.decision import run_decision
 from xora_chart.engines.trade.engine import manage_open_positions, open_from_opportunity
 from xora_chart.persistence.store import Store
+from xora_chart.services.binance_ws import BinanceWSHub
 
 log = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ async def run_cycle(
                 hub.add_stream_ref(opp.symbol, "markPrice@1s")
                 hub.add_stream_ref(opp.symbol, "kline_1m")
                 try:
-                    pos = open_from_opportunity(opp, store=store)
+                    pos = open_from_opportunity(opp, store=store, origin="auto")
                     opp.status = OpportunityStatus.TRADED
                     log.info("Auto-trade opened %s pos=%s", opp.symbol, pos.id[:8])
                 except RuntimeError as e:

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { createChart, ColorType, LineStyle } from 'lightweight-charts'
+import { chartTickFormatter, chartTimeFormatter } from './time'
 
 function overlayStyle(style) {
   const key = String(style || '').toLowerCase()
@@ -20,7 +21,8 @@ export default function CandleChart({ candles = [], trade = null, overlays = nul
       layout: { background: { type: ColorType.Solid, color: '#070c14' }, textColor: '#8190a8' },
       grid: { vertLines: { color: '#111a29' }, horzLines: { color: '#111a29' } },
       rightPriceScale: { borderColor: '#1a2639', scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: '#1a2639', timeVisible: true, secondsVisible: false, rightOffset: 6 },
+      timeScale: { borderColor: '#1a2639', timeVisible: true, secondsVisible: false, rightOffset: 6, tickMarkFormatter: chartTickFormatter },
+      localization: { timeFormatter: chartTimeFormatter },
       crosshair: {
         vertLine: { color: '#34445d', labelBackgroundColor: '#172235' },
         horzLine: { color: '#34445d', labelBackgroundColor: '#172235' },

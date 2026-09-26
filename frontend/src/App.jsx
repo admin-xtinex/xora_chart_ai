@@ -14,6 +14,7 @@ import {
   updateSettings,
 } from './api'
 import CandleChart from './CandleChart'
+import { fmtDateTime, fmtDuration } from './time'
 import PatternVisual from './PatternVisual'
 
 const NAV_ITEMS = [
@@ -28,7 +29,7 @@ const SCAN_GROUPS = [
   { id: 'gainers', label: 'Top Gainers', accent: 'emerald', sources: ['gainer', 'ws-price-gainer'] },
   { id: 'losers', label: 'Top Losers', accent: 'rose', sources: ['loser', 'ws-price-loser'] },
   { id: 'movers', label: 'Top Movers', accent: 'violet', sources: ['trending', 'ws-price-trending'] },
-  { id: 'volume', label: '24h Volume', accent: 'cyan', sources: ['volume', 'book-liquidity'] },
+  { id: 'volume', label: '24h Volume', accent: 'cyan', sources: ['high-volume', 'ws-price-high-volume', 'volume', 'book-liquidity'] },
 ]
 
 function cx(...items) { return items.filter(Boolean).join(' ') }
@@ -116,7 +117,7 @@ function sourceLabel(source) {
     gainer: 'Gainer', 'ws-price-gainer': 'Gainer',
     loser: 'Loser', 'ws-price-loser': 'Loser',
     trending: 'Mover', 'ws-price-trending': 'Mover',
-    volume: '24h volume', 'book-liquidity': 'Liquidity',
+    volume: '24h volume', 'high-volume': '24h volume', 'ws-price-high-volume': '24h volume', 'book-liquidity': 'Liquidity',
     'ws-price-watchlist': 'Discovery fill',
   }
   return labels[source] || source || 'Discovery'
@@ -413,7 +414,7 @@ function PositionsPage({ mode = 'open' }) {
 
   const load = useCallback(async () => {
     try {
-      const [items, stats] = await Promise.all([fetchPositions(mode), fetchTradeSummary()])
+      const [items, stats] = await Promise.all([fetchPositions(mode === 'open' ? 'open' : undefined), fetchTradeSummary()])
       setPositions(items || []); setSummary(stats); setPicked((prev) => (items || []).find((p) => p.id === prev?.id) || items?.[0] || null); setError(null)
     } catch (e) { setError(e.message || 'Could not load positions') }
   }, [mode])
@@ -426,26 +427,28 @@ function PositionsPage({ mode = 'open' }) {
   }
 
   const active = mode === 'open'
+  const isOpen = (p) => p?.status === 'open'
+  const pnlOf = (p) => (isOpen(p) ? p.live_pnl : p.realized_pnl)
   return (
     <div className="page-scroll">
       <div className="mx-auto max-w-[1500px] space-y-5 p-4 sm:p-6 lg:p-8">
-        <PageHeading eyebrow={active ? 'Position guardian' : 'Execution journal'} title={active ? 'Active Trades' : 'Trade History'} description={active ? 'Live demo positions with guardian health, current price, risk levels and manual close controls.' : 'Closed positions separated from live risk so performance review stays clean and auditable.'} />
+        <PageHeading eyebrow={active ? 'Position guardian' : 'Execution journal'} title={active ? 'Active Trades' : 'Trade History'} description={active ? 'Live demo positions with guardian health, current price, risk levels and manual close controls.' : 'Every executed trade, auto and manual, newest first. Open trades stay listed here until they close. Times shown in your local time zone.'} />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {active ? <><MetricCard label="Open positions" value={summary?.open_count ?? positions.length} detail="Currently managed" tone="cyan"/><MetricCard label="Unrealized PnL" value={fmt(summary?.open_unrealized_pnl, 2)} detail="USDT" tone={Number(summary?.open_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Max capacity" value={`${summary?.open_count || 0}/5`} detail="Engine risk cap" tone="violet"/><MetricCard label="Total trades" value={summary?.total_trades ?? '—'} detail="Open + closed" tone="blue"/></> : <><MetricCard label="Closed trades" value={summary?.closed_count ?? positions.length} detail="Journal records" tone="blue"/><MetricCard label="Realized PnL" value={fmt(summary?.total_realized_pnl, 2)} detail="USDT" tone={Number(summary?.total_realized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Win rate" value={`${fmt(summary?.win_rate, 1)}%`} detail={`${summary?.wins || 0} wins · ${summary?.losses || 0} losses`} tone="cyan"/><MetricCard label="Average PnL" value={fmt(summary?.avg_pnl, 2)} detail="Per closed trade" tone="violet"/></>}
         </div>
         {error && <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{error}</div>}
         <div className="grid min-h-[560px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
           <section className="xora-panel rounded-2xl p-3">
-            <div className="mb-3 flex items-center justify-between px-1"><div className="text-xs font-bold text-white">{active ? 'Open positions' : 'Closed positions'}</div><Badge tone={active ? 'info' : 'neutral'}>{positions.length}</Badge></div>
-            <div className="space-y-2">{positions.map((p) => <button key={p.id} onClick={() => setPicked(p)} className={cx('position-row w-full text-left', picked?.id === p.id && 'position-row-active')}><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-bold text-white">{p.symbol}</div><div className="mt-1 text-[10px] text-slate-600">{p.side} · {p.leverage}x · {p.status}</div></div><div className="text-right"><div className={cx('font-mono text-xs font-semibold', pnlClass(active ? p.live_pnl : p.realized_pnl))}>{fmt(active ? p.live_pnl : p.realized_pnl, 2)}</div><div className="mt-1 text-[9px] text-slate-600">{active ? fmt(p.live_price) : p.exit_reason || 'closed'}</div></div></div></button>)}{!positions.length && <div className="rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-600">{active ? 'No active trades.' : 'No closed trades yet.'}</div>}</div>
+            <div className="mb-3 flex items-center justify-between px-1"><div className="text-xs font-bold text-white">{active ? 'Open positions' : 'All trades'}</div><Badge tone={active ? 'info' : 'neutral'}>{positions.length}</Badge></div>
+            <div className="space-y-2">{positions.map((p) => <button key={p.id} onClick={() => setPicked(p)} className={cx('position-row w-full text-left', picked?.id === p.id && 'position-row-active')}><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-bold text-white">{p.symbol}</div><div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600"><span>{p.side} · {p.leverage}x</span><Badge tone={isOpen(p) ? 'info' : 'neutral'}>{p.status}</Badge><Badge tone={p.origin === 'auto' ? 'violet' : 'neutral'}>{p.origin === 'auto' ? 'Auto' : 'Manual'}</Badge></div><div className="mt-1 text-[9px] text-slate-600">{fmtDateTime(p.opened_at)}</div></div><div className="text-right"><div className={cx('font-mono text-xs font-semibold', pnlClass(pnlOf(p)))}>{fmt(pnlOf(p), 2)}</div><div className="mt-1 text-[9px] text-slate-600">{isOpen(p) ? fmt(p.live_price) : p.exit_reason || 'closed'}</div></div></div></button>)}{!positions.length && <div className="rounded-xl border border-dashed border-white/10 p-7 text-center text-xs text-slate-600">{active ? 'No active trades.' : 'No trades yet. Enable auto demo execution in Settings or open one from a reviewed coin.'}</div>}</div>
           </section>
           <section className="xora-panel rounded-2xl p-4 sm:p-5">
             {!picked ? <div className="grid h-full min-h-[420px] place-items-center text-sm text-slate-600">Select a position to inspect it.</div> : <div className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[9px] uppercase tracking-[.18em] text-slate-600">{active ? 'Managed position' : 'Closed trade'}</div><div className="mt-1 flex items-center gap-2"><h2 className="text-2xl font-bold text-white">{picked.symbol}</h2><Badge tone={picked.side === 'BUY' ? 'bull' : 'bear'}>{picked.side}</Badge></div><div className="mt-2 text-xs text-slate-500">Entry {fmt(picked.entry)} · {active ? `Live ${fmt(picked.live_price)}` : `Exit ${fmt(picked.exit_price)}`}</div></div><div className="text-right"><div className={cx('font-mono text-2xl font-bold', pnlClass(active ? picked.live_pnl : picked.realized_pnl))}>{fmt(active ? picked.live_pnl : picked.realized_pnl, 2)}</div><div className="text-[9px] uppercase tracking-[.14em] text-slate-600">{active ? 'Unrealized' : 'Realized'} PnL USDT</div></div></div>
-              {picked.health && active && <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[.05] p-4"><div className="flex flex-wrap items-center gap-2"><Badge tone={picked.health.status === 'strong' ? 'approve' : picked.health.status === 'critical' ? 'reject' : 'wait'}>{picked.health.action}</Badge><span className="text-xs text-slate-500">health {picked.health.score}/100 · progress {picked.health.progress_to_tp}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{picked.health.reason}</p></div>}
+              <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[9px] uppercase tracking-[.18em] text-slate-600">{isOpen(picked) ? 'Managed position' : 'Closed trade'} · {picked.origin === 'auto' ? 'Auto-executed' : 'Manual'}</div><div className="mt-1 flex items-center gap-2"><h2 className="text-2xl font-bold text-white">{picked.symbol}</h2><Badge tone={picked.side === 'BUY' ? 'bull' : 'bear'}>{picked.side}</Badge></div><div className="mt-2 text-xs text-slate-500">Entry {fmt(picked.entry)} · {isOpen(picked) ? `Live ${fmt(picked.live_price)}` : `Exit ${fmt(picked.exit_price)}`}</div><div className="mt-1 text-[11px] text-slate-500">Opened {fmtDateTime(picked.opened_at)}{picked.closed_at && <> · Closed {fmtDateTime(picked.closed_at)} · {fmtDuration(picked.duration_seconds)}</>}</div></div><div className="text-right"><div className={cx('font-mono text-2xl font-bold', pnlClass(pnlOf(picked)))}>{fmt(pnlOf(picked), 2)}</div><div className="text-[9px] uppercase tracking-[.14em] text-slate-600">{isOpen(picked) ? 'Unrealized' : 'Realized'} PnL USDT{picked.realized_pnl_percent != null && ` · ${fmtPct(picked.realized_pnl_percent)}`}</div></div></div>
+              {picked.health && isOpen(picked) &&  <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[.05] p-4"><div className="flex flex-wrap items-center gap-2"><Badge tone={picked.health.status === 'strong' ? 'approve' : picked.health.status === 'critical' ? 'reject' : 'wait'}>{picked.health.action}</Badge><span className="text-xs text-slate-500">health {picked.health.score}/100 · progress {picked.health.progress_to_tp}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{picked.health.reason}</p></div>}
               <CandleChart candles={picked.candles || []} trade={{ entry: picked.entry, stop_loss: picked.stop_loss, take_profit_1: picked.take_profit_1, take_profit_2: picked.take_profit_2, take_profit_3: picked.take_profit_3 }} height={330} />
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{[['Entry', picked.entry], ['Stop', picked.stop_loss], ['TP1', picked.take_profit_1], ['TP2', picked.take_profit_2], ['TP3', picked.take_profit_3], [active ? 'Live' : 'Exit', active ? picked.live_price : picked.exit_price]].map(([label, value]) => <div key={label} className="rounded-xl border border-white/[.06] p-3"><div className="text-[8px] uppercase tracking-[.14em] text-slate-600">{label}</div><div className="mt-1 font-mono text-xs font-semibold text-slate-200">{fmt(value)}</div></div>)}</div>
-              {active && <button onClick={() => handleClose(picked.id)} disabled={busy === picked.id} className="btn-danger">{busy === picked.id ? 'Closing…' : 'Close position manually'}</button>}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{[['Entry', picked.entry], ['Stop', picked.stop_loss], ['TP1', picked.take_profit_1], ['TP2', picked.take_profit_2], ['TP3', picked.take_profit_3], [isOpen(picked) ? 'Live' : 'Exit', isOpen(picked) ? picked.live_price : picked.exit_price]].map(([label, value]) => <div key={label} className="rounded-xl border border-white/[.06] p-3"><div className="text-[8px] uppercase tracking-[.14em] text-slate-600">{label}</div><div className="mt-1 font-mono text-xs font-semibold text-slate-200">{fmt(value)}</div></div>)}</div>
+              {isOpen(picked) && <button onClick={() => handleClose(picked.id)} disabled={busy === picked.id} className="btn-danger">{busy === picked.id ? 'Closing…' : 'Close position manually'}</button>}
             </div>}
           </section>
         </div>

@@ -7,6 +7,8 @@ live prices/order-book state come from Binance WebSockets.
 
 from __future__ import annotations
 
+from datetime import date, datetime
+from enum import Enum
 from typing import Any
 import logging
 
@@ -36,6 +38,10 @@ def _dump(value: Any) -> Any:
         return [_dump(v) for v in value]
     if isinstance(value, dict):
         return {k: _dump(v) for k, v in value.items()}
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
     return value
 
 
@@ -180,7 +186,7 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
 
         try:
             manage_open_positions()
-            return [enrich_position(p) for p in store.list_positions(status=payload.get("status"))]
+            return [enrich_position(p) for p in list_positions(status=payload.get("status"), store=store)]
         finally:
             # Remove stream references for open position symbols
             try:
@@ -232,7 +238,7 @@ async def _dispatch(action: str, payload: dict[str, Any]) -> Any:
 
         try:
             manage_open_positions()
-            return [enrich_position(p) for p in store.list_positions(status="open")]
+            return [enrich_position(p) for p in list_positions(status="open", store=store)]
         finally:
             # Remove stream references for open position symbols
             try:

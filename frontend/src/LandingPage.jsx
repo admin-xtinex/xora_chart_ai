@@ -1,46 +1,15 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 export default function LandingPage() {
-  const videoRef = useRef(null)
-
   useEffect(() => {
     document.body.classList.add('xora-home')
-    const video = videoRef.current
-    if (!video) return () => document.body.classList.remove('xora-home')
-    const play = () => video.play().catch(() => undefined)
-    play()
-    video.addEventListener('canplay', play)
-    const onVis = () => (document.hidden ? video.pause() : play())
-    document.addEventListener('visibilitychange', onVis)
-    return () => {
-      video.removeEventListener('canplay', play)
-      document.removeEventListener('visibilitychange', onVis)
-      document.body.classList.remove('xora-home')
-    }
+    return () => document.body.classList.remove('xora-home')
   }, [])
 
   return (
     <div className="xh">
-      {/* Animated Background */}
       <div className="xh-background" aria-hidden="true">
-        <div className="xh-background-video">
-          <video ref={videoRef} muted loop playsInline autoPlay preload="metadata" poster="/xora-scene.jpg">
-            <source src="/xora-loop.mp4" type="video/mp4" />
-          </video>
-        </div>
-        <div className="xh-background-overlay">
-          {/* Red bearish market flow (left) */}
-          <div className="xh-flow bearish"></div>
-          {/* Blue bullish market flow (right) */}
-          <div className="xh-flow bullish"></div>
-          {/* Subtle moving particles */}
-          <div className="xh-particles"></div>
-          {/* Animated chart lines / candlesticks */}
-          <div className="xh-charts"></div>
-          {/* Glowing AI brain / neural network feel */}
-          <div className="xh-neural"></div>
-        </div>
-        <div className="xh-grade" />
+        <div className="xh-background-image" />
         <div className="xh-scrim" />
       </div>
 

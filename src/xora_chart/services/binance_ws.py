@@ -50,7 +50,7 @@ BOOTSTRAP_SYMBOLS = (
     "ADAUSDT", "LINKUSDT", "AVAXUSDT", "LTCUSDT", "BCHUSDT", "DOTUSDT",
     "TRXUSDT", "UNIUSDT", "SUIUSDT", "APTUSDT", "NEARUSDT", "ARBUSDT",
     "OPUSDT", "AAVEUSDT", "FILUSDT", "ETCUSDT", "ATOMUSDT", "INJUSDT",
-    "SEIUSDT", "TIAUSDT", "WIFUSDT", "PEPEUSDT", "1000SHIBUSDT", "ENAUSDT",
+    "SEIUSDT", "TIAUSDT", "WIFUSDT", "1000PEPEUSDT", "1000SHIBUSDT", "ENAUSDT",
 )
 
 
@@ -489,7 +489,9 @@ class BinanceWSHub:
     async def _session(self) -> None:
         # Build initial stream list
         streams = self.get_needed_streams()
-        url = f"{WS_BASE}/stream?streams=" + "/".join(streams)
+        # Binance serves ticker/kline/markPrice only on the /market route now; the
+        # legacy /stream route accepts the connection but never sends them.
+        url = f"{WS_BASE}/market/stream?streams=" + "/".join(streams)
         log.info("WS connect streams=%d", len(streams))
 
         async with websockets.connect(

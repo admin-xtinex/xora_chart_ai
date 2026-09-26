@@ -9,12 +9,14 @@ RG="${RG:-rg-xora-chart-ai}"
 APP="${APP:-xora-chart-ai-1790394016}"
 REPO="${REPO:-admin-xtinex/xora_chart_ai}"
 ID_NAME="${ID_NAME:-id-xora-github-deploy}"
+# This repo uses GitHub's immutable OIDC subject format (owner@id/repo@id).
+SUBJECT="${SUBJECT:-repo:admin-xtinex@270872005/xora_chart_ai@1346776376:environment:azure}"
 LOCATION="$(az webapp show -g "$RG" -n "$APP" --query location -o tsv)"
 
 az identity create -g "$RG" -n "$ID_NAME" -l "$LOCATION" -o none
 az identity federated-credential create -g "$RG" --identity-name "$ID_NAME" -n github-azure-env \
   --issuer https://token.actions.githubusercontent.com \
-  --subject "repo:${REPO}:environment:azure" \
+  --subject "$SUBJECT" \
   --audiences api://AzureADTokenExchange -o none
 
 CLIENT_ID="$(az identity show -g "$RG" -n "$ID_NAME" --query clientId -o tsv)"

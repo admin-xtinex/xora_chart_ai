@@ -23,12 +23,18 @@ def _mode() -> TradeMode:
     return TradeMode.LIVE if m == "live" else TradeMode.DEMO
 
 
-def _sizing(entry: float, stop: float, equity: float, risk_pct: float, leverage: int) -> tuple[float, float]:
+def _sizing(
+    entry: float, stop: float, equity: float, risk_pct: float, leverage: int, max_margin: float
+) -> tuple[float, float]:
     risk_amount = equity * (risk_pct / 100.0)
     stop_dist = abs(entry - stop)
     if stop_dist <= 0 or entry <= 0:
         return 0.0, 0.0
     qty = risk_amount / stop_dist
+    # Tight stops make risk-based size explode; never commit more margin than
+    # one position's share of the account.
+    max_qty = max_margin * max(leverage, 1) / entry
+    qty = min(qty, max_qty)
     notional = qty * entry
     margin = notional / max(leverage, 1)
     return round(qty, 6), round(margin, 4)
@@ -59,6 +65,7 @@ def open_position(
     setup: TradeLevels,
     opportunity_id: str | None = None,
     decision_reason: str | None = None,
+    origin: str = "manual",
     store: Store | None = None,
 ) -> Position:
     store = store or Store.instance()
@@ -80,7 +87,7 @@ def open_position(
     if any(p.symbol == symbol and p.status == PositionStatus.OPEN for p in open_pos):
         raise RuntimeError(f"Already open on {symbol}")
 
-    qty, margin = _sizing(setup.entry, setup.stop_loss, equity, risk_pct, leverage)
+    qty, margin = _sizing(setup.entry, setup.stop_loss, equity, risk_pct, leverage, equity / max(max_pos, 1))
     if qty <= 0:
         raise RuntimeError("Invalid position size")
 
@@ -99,6 +106,7 @@ def open_position(
         margin_used=margin,
         opportunity_id=opportunity_id,
         decision_reason=decision_reason,
+        origin=origin,
         last_price=setup.entry,
     )
 
@@ -233,7 +241,7 @@ def open_position(
     return pos
 
 
-def open_from_opportunity(opp: Opportunity, store: Store | None = None) -> Position:
+def open_from_opportunity(opp: Opportunity, store: Store | None = None, origin: str = "manual") -> Position:
     """Only execution entry point for an analyzed opportunity.
 
     APPROVE alone is intentionally insufficient: the best match must retain
@@ -253,6 +261,7 @@ def open_from_opportunity(opp: Opportunity, store: Store | None = None) -> Posit
             f"{opp.decision.reason} · reference={match.matched_example} "
             f"({match.reference_similarity:.1f}%)"
         ),
+        origin=origin,
         store=store,
     )
 
@@ -280,7 +289,10 @@ def close_position(
     pos.exit_price = px
     pos.exit_reason = reason
     pos.realized_pnl = round(pnl, 4)
+    if pos.margin_used:
+        pos.realized_pnl_percent = round(pnl / pos.margin_used * 100, 2)
     pos.closed_at = datetime.utcnow()
+    pos.duration_seconds = int((pos.closed_at - pos.opened_at).total_seconds())
     store.save_position(pos)
     log.info("Closed %s reason=%s px=%s pnl=%s", pos.symbol, reason, px, pos.realized_pnl)
     return pos
