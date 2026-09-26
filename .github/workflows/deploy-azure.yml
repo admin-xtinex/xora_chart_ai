@@ -1,0 +1,126 @@
+name: XORA Azure App Service
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: xora-azure-app-service
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  AZURE_WEBAPP_NAME: xora-chart-ai-1790394016
+  AZURE_RESOURCE_GROUP: rg-xora-chart-ai
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Backend compile and tests
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m compileall -q src
+          pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Frontend build
+        working-directory: frontend
+        env:
+          # Empty => browser connects to wss://<app host>/ws (same origin).
+          VITE_WS_BASE: ""
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+          npm run build
+
+      - name: Assemble deployment package
+        run: |
+          set -euo pipefail
+          mkdir -p package
+          cp -r src config data chart_reference requirements.txt pyproject.toml README.md package/
+          cp -r frontend/dist package/static
+          find package -name '__pycache__' -type d -prune -exec rm -rf {} +
+          du -sh package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xora-app
+          path: package
+          include-hidden-files: false
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Azure App Service
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: azure
+      url: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: xora-app
+          path: package
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy (Oryx installs requirements.txt on the server)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          resource-group-name: ${{ env.AZURE_RESOURCE_GROUP }}
+          package: package
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          BASE="https://${AZURE_WEBAPP_NAME}.azurewebsites.net"
+          for i in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/healthz" || true)"
+            if [ "$code" = "200" ]; then break; fi
+            echo "healthz=$code (attempt $i), waiting..."; sleep 10
+          done
+          [ "$code" = "200" ] || { echo "Backend did not become healthy" >&2; exit 1; }
+          curl -fsS --max-time 10 "$BASE/" | grep -qi '<div id="root"' || { echo "Frontend not served" >&2; exit 1; }
+          python3 -m pip install -q websockets
+          python3 - <<PY
+          import asyncio, json, websockets
+          async def main():
+              async with websockets.connect("wss://${AZURE_WEBAPP_NAME}.azurewebsites.net/ws", open_timeout=15) as ws:
+                  await ws.recv()
+                  await ws.send(json.dumps({"id": "smoke", "action": "health", "payload": {}}))
+                  msg = json.loads(await asyncio.wait_for(ws.recv(), 20))
+                  print(json.dumps(msg.get("data") or msg, indent=2)[:2000])
+          asyncio.run(main())
+          PY

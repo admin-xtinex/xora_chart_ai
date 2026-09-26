@@ -30,3 +30,5 @@ env/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+/static/
+node_modules/

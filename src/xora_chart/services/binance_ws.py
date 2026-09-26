@@ -29,7 +29,6 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-import binance
 from xora_chart.config import load_config
 from xora_chart.persistence.store import Store
 
@@ -465,6 +464,8 @@ class BinanceWSHub:
 
     async def _reconcile_symbol(self, symbol: str, timeframe: str = "1m") -> None:
         """Reconcile historical data for a specific symbol via REST API."""
+        from xora_chart.services import binance  # local: binance imports this module
+
         try:
             # Fetch fresh historical data via REST
             window = await binance.fetch_klines(symbol, interval=timeframe, limit=100)

@@ -1,11 +1,8 @@
 name: XORA Self-Hosted VM Pipeline
 
+# Automatic deploys moved to Azure App Service (deploy-azure.yml).
+# Kept for manual runs against the GCP VM only.
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
