@@ -91,3 +91,26 @@ def test_websocket_requires_login_and_admin_role(users):
 
         ws.send_json({"id": "4", "action": "positions.summary", "payload": {}})
         assert ws.receive_json()["ok"]
+
+
+def test_seed_users_creates_missing_and_keeps_existing(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("XORA_USERS_FILE", str(tmp_path / "users.json"))
+    monkeypatch.delenv("XORA_ADMIN_USERNAME", raising=False)
+    monkeypatch.delenv("XORA_ADMIN_PASSWORD", raising=False)
+    seed = [
+        {"username": "admin", "password": "admin-pass-1", "role": "admin"},
+        {"username": "user1", "password": "user1-pass-1", "role": "user"},
+        {"username": "bad", "password": "short"},
+    ]
+    monkeypatch.setenv("XORA_SEED_USERS", json.dumps(seed))
+    store = UserStore(tmp_path / "users.json")
+    assert {u["username"]: u["role"] for u in store.list_users()} == {"admin": "admin", "user1": "user"}
+    store.change_password("user1", "user1-pass-1", "user1-changed", token="t")
+
+    # Restarting with the seed still set must not reset changed passwords.
+    again = UserStore(tmp_path / "users.json")
+    again.login("user1", "user1-changed")
+    with pytest.raises(AuthError):
+        again.login("user1", "user1-pass-1")

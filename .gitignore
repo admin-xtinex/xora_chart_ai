@@ -32,3 +32,5 @@ htmlcov/
 .mypy_cache/
 /static/
 node_modules/
+# Local scripts that may contain credentials
+*.local.ps1

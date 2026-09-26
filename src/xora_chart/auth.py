@@ -6,7 +6,9 @@ changes are rare.  Passwords are salted scrypt hashes; session tokens are
 random and only their SHA-256 digest is stored.
 
 The first admin is created from ``XORA_ADMIN_USERNAME`` / ``XORA_ADMIN_PASSWORD``
-when no users exist yet.
+when no users exist yet.  ``XORA_SEED_USERS`` (a JSON list of
+``{"username", "password", "role"}``) creates any listed users that don't exist;
+existing users are never modified.  Both are meant to be removed after use.
 """
 
 from __future__ import annotations
@@ -95,6 +97,7 @@ class UserStore:
         self._failures: dict[str, tuple[int, float]] = {}
         self._load()
         self._bootstrap_admin()
+        self._seed_users()
 
     @classmethod
     def instance(cls) -> "UserStore":
@@ -138,6 +141,27 @@ class UserStore:
             log.info("Bootstrapped admin user %s", username)
         except AuthError as exc:
             log.error("Admin bootstrap failed: %s", exc)
+
+    def _seed_users(self) -> None:
+        raw = os.getenv("XORA_SEED_USERS", "").strip()
+        if not raw:
+            return
+        try:
+            entries = json.loads(raw)
+            if not isinstance(entries, list):
+                raise ValueError("expected a JSON list")
+        except ValueError as exc:
+            log.error("XORA_SEED_USERS is not valid JSON: %s", exc)
+            return
+        for entry in entries:
+            name = str((entry or {}).get("username") or "")
+            if name.lower() in self._users:
+                continue
+            try:
+                self.create_user(name, str(entry.get("password") or ""), str(entry.get("role") or "user"))
+                log.info("Seeded user %s", name)
+            except AuthError as exc:
+                log.error("Seeding user %r failed: %s", name, exc)
 
     # ---------- public API ----------
     @staticmethod
