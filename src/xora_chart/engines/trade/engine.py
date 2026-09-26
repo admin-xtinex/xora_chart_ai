@@ -25,11 +25,11 @@ def _mode() -> TradeMode:
 
 def configured_max_open_positions() -> int:
     cfg = load_config().get("trade", {})
-    raw = os.getenv("XORA_MAX_OPEN_POSITIONS", str(cfg.get("max_open_positions", 40)))
+    raw = os.getenv("XORA_MAX_OPEN_POSITIONS", str(cfg.get("max_open_positions", 20)))
     try:
         return max(1, int(raw))
     except (TypeError, ValueError):
-        return 40
+        return 20
 
 
 def _sizing(entry: float, margin: float, leverage: int) -> tuple[float, float]:

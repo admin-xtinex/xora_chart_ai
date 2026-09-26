@@ -9,6 +9,18 @@ let connectPromise = null
 let seq = 0
 const pending = new Map()
 
+// ---- session ----
+const TOKEN_KEY = 'xora_session'
+const authListeners = new Set()
+let currentUser = null
+
+function readToken() { try { return localStorage.getItem(TOKEN_KEY) } catch { return null } }
+function writeToken(token) { try { token ? localStorage.setItem(TOKEN_KEY, token) : localStorage.removeItem(TOKEN_KEY) } catch { /* ignore */ } }
+function setUser(user) { currentUser = user; for (const fn of authListeners) fn(user) }
+
+export function onAuthChange(fn) { authListeners.add(fn); return () => authListeners.delete(fn) }
+export function getUser() { return currentUser }
+
 function failPending(message) {
   for (const [, item] of pending) item.reject(new Error(message))
   pending.clear()
@@ -27,8 +39,13 @@ function connect() {
       reject(new Error('WebSocket connection timeout'))
     }, 10000)
 
-    ws.onopen = () => {
+    ws.onopen = async () => {
       clearTimeout(timer)
+      const token = readToken()
+      if (token) {
+        try { const res = await send(ws, 'auth.resume', { token }, 15000); setUser(res.user) }
+        catch { writeToken(null); setUser(null) }
+      } else if (currentUser) setUser(null)
       connectPromise = null
       resolve(ws)
     }
@@ -42,7 +59,10 @@ function connect() {
       pending.delete(msg.id)
       clearTimeout(item.timer)
       if (msg.ok) item.resolve(msg.data)
-      else item.reject(new Error(msg.error || 'WebSocket request failed'))
+      else {
+        if (msg.auth_error && currentUser) { writeToken(null); setUser(null) }
+        item.reject(new Error(msg.error || 'WebSocket request failed'))
+      }
     }
 
     ws.onerror = () => { /* close handler rejects active requests */ }
@@ -57,8 +77,7 @@ function connect() {
   return connectPromise
 }
 
-async function rpc(action, payload = {}, timeoutMs = 190000) {
-  const ws = await connect()
+function send(ws, action, payload, timeoutMs) {
   const id = `${Date.now()}-${++seq}`
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -70,6 +89,35 @@ async function rpc(action, payload = {}, timeoutMs = 190000) {
     catch (err) { clearTimeout(timer); pending.delete(id); reject(err) }
   })
 }
+
+async function rpc(action, payload = {}, timeoutMs = 190000) {
+  const ws = await connect()
+  return send(ws, action, payload, timeoutMs)
+}
+
+/** Resolve the stored session (if any) and return the signed-in user or null. */
+export async function restoreSession() {
+  if (!readToken()) return null
+  try { await connect() } catch { return null }
+  return currentUser
+}
+
+export async function login(username, password) {
+  const res = await rpc('auth.login', { username, password }, 20000)
+  writeToken(res.token); setUser(res.user)
+  return res.user
+}
+
+export async function logout() {
+  try { await rpc('auth.logout', {}, 8000) } catch { /* ignore */ }
+  writeToken(null); setUser(null)
+}
+
+export function changePassword(currentPassword, newPassword) { return rpc('auth.change_password', { current_password: currentPassword, new_password: newPassword }, 20000) }
+export function listUsers() { return rpc('users.list') }
+export function createUser(username, password, role) { return rpc('users.create', { username, password, role }, 20000) }
+export function deleteUser(username) { return rpc('users.delete', { username }) }
+export function resetUserPassword(username, newPassword) { return rpc('users.reset_password', { username, new_password: newPassword }, 20000) }
 
 function normalizeSymbol(raw) {
   const compact = String(raw || '').trim().toUpperCase().replace(/[\/\-\s]/g, '')

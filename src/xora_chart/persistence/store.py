@@ -6,6 +6,7 @@ opportunities, cycles, and demo positions survive container rebuilds/restarts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -15,6 +16,14 @@ from typing import Any
 
 from xora_chart.config import load_config
 from xora_chart.domain.models import CycleResult, Opportunity, Position, TradeEvent, XORATrade
+
+# Snapshots are coalesced: every mutation marks the store dirty and one write
+# happens at most this often.  Serializing the full state on every price tick
+# saturated the single App Service vCPU once dozens of positions were open.
+FLUSH_INTERVAL_SECONDS = 5.0
+PERSISTED_CYCLES = 10
+# Cycle history is summary data; candle arrays live on the opportunities.
+_CYCLE_EXCLUDE = {"opportunities": {"__all__": {"candles", "analysis", "all_matches", "market_analysis"}}}
 
 
 class Store:
@@ -43,6 +52,7 @@ class Store:
         }
         self._state_path = Path(os.getenv("XORA_STATE_FILE", "state/xora_state.json"))
         self._io_lock = threading.RLock()
+        self._flush_handle: asyncio.TimerHandle | None = None
         self._restore()
 
     @classmethod
@@ -89,19 +99,57 @@ class Store:
             return
 
     def _persist(self) -> None:
-        with self._io_lock:
-            try:
-                self._state_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = {
+        """Schedule a snapshot; writes immediately when no event loop is running."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.flush()
+            return
+        if self._flush_handle is None:
+            self._flush_handle = loop.call_later(FLUSH_INTERVAL_SECONDS, self._flush_scheduled)
+
+    def _flush_scheduled(self) -> None:
+        self._flush_handle = None
+        payload = self._snapshot()
+        if payload is None:
+            return
+        # Serialize on the loop thread (consistent state); write off-thread.
+        asyncio.get_running_loop().run_in_executor(None, self._write, payload)
+
+    def flush(self) -> None:
+        """Write the current state now (shutdown, scripts, tests)."""
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        payload = self._snapshot()
+        if payload is not None:
+            self._write(payload)
+
+    def _snapshot(self) -> str | None:
+        try:
+            return json.dumps(
+                {
                     "settings": self._settings,
-                    "cycles": [c.model_dump(mode="json") for c in self._cycles],
+                    "cycles": [
+                        c.model_dump(mode="json", exclude=_CYCLE_EXCLUDE)
+                        for c in list(self._cycles)[:PERSISTED_CYCLES]
+                    ],
                     "opportunities": [o.model_dump(mode="json") for o in self.list_opportunities(self._max_opps)],
                     "positions": [p.model_dump(mode="json") for p in self.list_positions()],
                     "trades": [t.model_dump(mode="json") for t in self.list_trades(self._max_positions)],
                     "events": [e.model_dump(mode="json") for e in self.list_events(1000)],
-                }
+                },
+                separators=(",", ":"),
+            )
+        except Exception:
+            return None
+
+    def _write(self, payload: str) -> None:
+        with self._io_lock:
+            try:
+                self._state_path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
-                tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+                tmp.write_text(payload, encoding="utf-8")
                 tmp.replace(self._state_path)
             except Exception:
                 # Runtime scanning should continue even if persistence is temporarily unavailable.

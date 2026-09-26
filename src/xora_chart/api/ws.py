@@ -7,6 +7,7 @@ live prices/order-book state come from Binance WebSockets.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -15,6 +16,8 @@ import logging
 log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from xora_chart.auth import AuthError, UserStore
 
 from xora_chart.application import discovery
 from xora_chart.application.llm_explainer import explain_opportunity, status as llm_status
@@ -396,25 +399,85 @@ async def _dispatch(action: str, payload: dict[str, Any], *, client_key: str = "
     raise RuntimeError(f"Unknown WebSocket action: {action}")
 
 
+# Actions only admins may call; every other action needs any signed-in user.
+ADMIN_ACTIONS = {"settings.update", "watchlist.update", "users.list", "users.create", "users.delete", "users.reset_password"}
+
+
+async def _auth_dispatch(action: str, payload: dict[str, Any], session: dict[str, Any]) -> Any:
+    """Handle auth.* / users.* actions. Returns None when the action isn't one of them."""
+    users = UserStore.instance()
+    user = session.get("user")
+    if action == "auth.login":
+        token, info = await asyncio.to_thread(users.login, str(payload.get("username") or ""), str(payload.get("password") or ""))
+        session.update(user=info, token=token)
+        return {"token": token, "user": info}
+    if action == "auth.resume":
+        info = users.resume(str(payload.get("token") or ""))
+        session.update(user=info, token=str(payload.get("token")))
+        return {"user": info}
+    if action == "auth.logout":
+        if session.get("token"):
+            users.logout(session["token"])
+        session.clear()
+        return {"ok": True}
+    if not action.startswith(("auth.", "users.")):
+        return None
+    if not user:
+        raise AuthError("Please sign in")
+    if action == "auth.me":
+        return {"user": user}
+    if action == "auth.change_password":
+        await asyncio.to_thread(
+            users.change_password, user["username"], str(payload.get("current_password") or ""),
+            str(payload.get("new_password") or ""), token=session["token"],
+        )
+        return {"ok": True}
+    if action == "users.list":
+        return users.list_users()
+    if action == "users.create":
+        return await asyncio.to_thread(
+            users.create_user, str(payload.get("username") or ""), str(payload.get("password") or ""),
+            str(payload.get("role") or "user"),
+        )
+    if action == "users.delete":
+        users.delete_user(str(payload.get("username") or ""), acting=user["username"])
+        return {"ok": True}
+    if action == "users.reset_password":
+        await asyncio.to_thread(users.set_password, str(payload.get("username") or ""), str(payload.get("new_password") or ""))
+        return {"ok": True}
+    raise RuntimeError(f"Unknown WebSocket action: {action}")
+
+
 @router.websocket("/ws")
 async def dashboard_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     client_key = websocket.client.host if websocket.client else "unknown"
+    session: dict[str, Any] = {}
     try:
-        await websocket.send_json({"type": "ready", "data": _health()})
+        # Unauthenticated clients only learn that the service is up.
+        await websocket.send_json({"type": "ready", "data": {"status": "ok", "service": "xora-chart-ai", "auth_required": True}})
         while True:
             message = await websocket.receive_json()
             request_id = message.get("id")
             action = str(message.get("action") or "")
             payload = message.get("payload") or {}
             try:
-                data = await _dispatch(action, payload, client_key=client_key)
+                if action in ADMIN_ACTIONS and (session.get("user") or {}).get("role") != "admin":
+                    raise AuthError("Admin access required" if session.get("user") else "Please sign in")
+                data = await _auth_dispatch(action, payload, session)
+                if data is None:
+                    if not session.get("user"):
+                        raise AuthError("Please sign in")
+                    data = await _dispatch(action, payload, client_key=client_key)
                 await websocket.send_json(
                     {"type": "response", "id": request_id, "ok": True, "data": _dump(data)}
                 )
             except Exception as exc:
                 await websocket.send_json(
-                    {"type": "response", "id": request_id, "ok": False, "error": str(exc)}
+                    {
+                        "type": "response", "id": request_id, "ok": False, "error": str(exc),
+                        "auth_error": isinstance(exc, AuthError) and not session.get("user"),
+                    }
                 )
     except WebSocketDisconnect:
         return

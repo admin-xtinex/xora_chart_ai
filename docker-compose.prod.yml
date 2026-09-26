@@ -10,7 +10,7 @@ services:
       XORA_TRADE_MODE: "${XORA_TRADE_MODE:-demo}"
       XORA_STATE_FILE: "/app/state/xora_state.json"
       XORA_WS_STATE_PATH: "/app/state/ws_market.json"
-      XORA_MAX_OPEN_POSITIONS: "${XORA_MAX_OPEN_POSITIONS:-40}"
+      XORA_MAX_OPEN_POSITIONS: "${XORA_MAX_OPEN_POSITIONS:-20}"
       XORA_LLM_ENABLED: "${XORA_LLM_ENABLED:-false}"
       XORA_LLM_PROVIDERS: "${XORA_LLM_PROVIDERS:-groq,gemini}"
       GROQ_API_KEY: "${GROQ_API_KEY:-}"

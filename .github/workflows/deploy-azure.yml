@@ -113,7 +113,7 @@ jobs:
               "GEMINI_API_KEY=$GEMINI_API_KEY" \
               "XORA_LLM_ENABLED=$XORA_LLM_ENABLED" \
               "XORA_LLM_PROVIDERS=groq,gemini" \
-              "XORA_MAX_OPEN_POSITIONS=40" \
+              "XORA_MAX_OPEN_POSITIONS=20" \
             --output none
 
       - name: Deploy (Oryx installs requirements.txt on the server)
@@ -138,10 +138,13 @@ jobs:
           python3 - <<PY
           import asyncio, json, websockets
           async def main():
-              async with websockets.connect("wss://${AZURE_WEBAPP_NAME}.azurewebsites.net/ws", open_timeout=15) as ws:
-                  await ws.recv()
+              async with websockets.connect("wss://${AZURE_WEBAPP_NAME}.azurewebsites.net/ws", open_timeout=30) as ws:
+                  ready = json.loads(await ws.recv())
+                  assert ready["data"].get("auth_required") is True, ready
+                  # Signed-out clients must be refused.
                   await ws.send(json.dumps({"id": "smoke", "action": "health", "payload": {}}))
                   msg = json.loads(await asyncio.wait_for(ws.recv(), 20))
-                  print(json.dumps(msg.get("data") or msg, indent=2)[:2000])
+                  assert msg["ok"] is False and msg.get("auth_error"), msg
+                  print("WebSocket up; unauthenticated access correctly refused")
           asyncio.run(main())
           PY

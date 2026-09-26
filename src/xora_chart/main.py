@@ -12,7 +12,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from xora_chart.api.ws import router as ws_router
 from xora_chart.application.pipeline import run_cycle
+from xora_chart.auth import UserStore
 from xora_chart.config import load_config
+from xora_chart.persistence.store import Store
 from xora_chart.services.binance_ws import BinanceWSHub, ensure_hub
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ async def _cycle_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    UserStore.instance()  # load users / bootstrap the first admin
     hub = await ensure_hub()
     cycle_task = asyncio.create_task(_cycle_loop(), name="xora-cycle-loop")
     try:
@@ -60,6 +63,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         hub.stop()
+        Store.instance().flush()
 
 
 app = FastAPI(

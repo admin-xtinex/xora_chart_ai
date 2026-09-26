@@ -48,7 +48,7 @@ trade:
   margin_per_trade: 10
   default_leverage: 10
   max_leverage: 10
-  max_open_positions: 40
+  max_open_positions: 20
   default_rr_targets: [1.5, 2.5, 3.5]
   min_risk_reward: 1.5
 

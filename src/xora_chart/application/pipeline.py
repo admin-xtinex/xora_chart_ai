@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -109,7 +110,9 @@ async def run_cycle(
         hub.add_stream_ref(symbol, "ticker")
         hub.add_stream_ref(symbol, "markPrice@1s")
         try:
-            matches = matcher.match_window(window)
+            # Chart rendering + reference comparison is CPU-heavy; keep the event
+            # loop free so dashboard WebSockets stay responsive during a scan.
+            matches = await asyncio.to_thread(matcher.match_window, window)
             if not matches:
                 continue
 

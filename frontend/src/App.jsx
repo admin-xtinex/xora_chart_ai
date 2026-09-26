@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   analyzeSymbol,
+  changePassword,
   closeTrade,
+  createUser,
+  deleteUser,
   explainOpportunity,
   fetchHealth,
   fetchOpportunities,
@@ -10,7 +13,14 @@ import {
   fetchScanPlan,
   fetchSettings,
   fetchTradeSummary,
+  getUser,
+  listUsers,
+  login,
+  logout,
+  onAuthChange,
   openDemoTrade,
+  resetUserPassword,
+  restoreSession,
   runCycle,
   updateSettings,
 } from './api'
@@ -235,6 +245,7 @@ function ScanPage({ health, onReview }) {
 
   const oppMap = useMemo(() => Object.fromEntries((opps || []).map((o) => [o.symbol, o])), [opps])
   const { buckets, total, sourceTotal } = useMemo(() => buildBuckets(plan?.coins || []), [plan])
+  const scanTarget = plan?.count || plan?.coins?.length || 40
   const matched = opps.filter((o) => o.best_match)
   const approved = opps.filter((o) => o.decision?.action === 'APPROVE')
   const avgMatch = matched.length ? matched.reduce((sum, o) => sum + Number(o.best_match?.reference_similarity ?? o.best_match?.similarity ?? 0), 0) / matched.length : 0
@@ -263,10 +274,10 @@ function ScanPage({ health, onReview }) {
   return (
     <div className="page-scroll">
       <div className="mx-auto max-w-[1540px] space-y-5 p-4 sm:p-6 lg:p-8">
-        <PageHeading eyebrow="Market discovery" title="20-Coin Intelligence Scan" description="Four discovery cohorts, one unique universe. XORA keeps pattern matching, analysis, decision and execution logic on the backend and gives you a focused review workflow here." actions={<button onClick={handleScan} disabled={scanning} className="btn-primary"><Icon name="refresh" size={15}/>{scanning ? 'Scanning…' : 'Run new scan'}</button>} />
+        <PageHeading eyebrow="Market discovery" title={`${scanTarget}-Coin Intelligence Scan`} description="Four discovery cohorts, one unique universe. XORA keeps pattern matching, analysis, decision and execution logic on the backend and gives you a focused review workflow here." actions={<button onClick={handleScan} disabled={scanning} className="btn-primary"><Icon name="refresh" size={15}/>{scanning ? 'Scanning…' : 'Run new scan'}</button>} />
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <MetricCard label="Unique universe" value={loading ? '—' : `${total || sourceTotal}/20`} detail="No duplicate symbols" tone="cyan" />
+          <MetricCard label="Unique universe" value={loading ? '—' : `${total || sourceTotal}/${scanTarget}`} detail="No duplicate symbols" tone="cyan" />
           <MetricCard label="Matched patterns" value={matched.length} detail="Current opportunity cache" tone="violet" />
           <MetricCard label="Approved setups" value={approved.length} detail="Decision engine APPROVE" tone="green" />
           <MetricCard label="Avg. chart match" value={avgMatch ? `${avgMatch.toFixed(0)}%` : '—'} detail="Reference similarity" tone="blue" />
@@ -461,7 +472,7 @@ function PositionsPage({ mode = 'open', health }) {
       <div className="mx-auto max-w-[1500px] space-y-5 p-4 sm:p-6 lg:p-8">
         <PageHeading eyebrow={active ? 'Position guardian' : 'Execution journal'} title={active ? 'Active Trades' : 'Trade History'} description={active ? 'Live demo positions with guardian health, current price, risk levels and manual close controls.' : 'Every executed trade, auto and manual, newest first. Open trades stay listed here until they close. Times shown in your local time zone.'} />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {active ? <><MetricCard label="Open positions" value={summary?.open_count ?? positions.length} detail="Currently managed" tone="cyan"/><MetricCard label="Unrealized PnL" value={fmt(summary?.open_unrealized_pnl, 2)} detail="USDT" tone={Number(summary?.open_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Max capacity" value={`${summary?.open_count || 0}/${health?.max_open_positions ?? 40}`} detail="B1-safe engine cap" tone="violet"/><MetricCard label="Total trades" value={summary?.total_trades ?? '—'} detail="Open + closed" tone="blue"/></> : <><MetricCard label="Closed trades" value={summary?.closed_count ?? positions.length} detail="Journal records" tone="blue"/><MetricCard label="Realized PnL" value={fmt(summary?.total_realized_pnl, 2)} detail="USDT" tone={Number(summary?.total_realized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Win rate" value={`${fmt(summary?.win_rate, 1)}%`} detail={`${summary?.wins || 0} wins · ${summary?.losses || 0} losses`} tone="cyan"/><MetricCard label="Average PnL" value={fmt(summary?.avg_pnl, 2)} detail="Per closed trade" tone="violet"/></>}
+          {active ? <><MetricCard label="Open positions" value={summary?.open_count ?? positions.length} detail="Currently managed" tone="cyan"/><MetricCard label="Unrealized PnL" value={fmt(summary?.open_unrealized_pnl, 2)} detail="USDT" tone={Number(summary?.open_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Max capacity" value={`${summary?.open_count || 0}/${health?.max_open_positions ?? 20}`} detail="B1-safe engine cap" tone="violet"/><MetricCard label="Total trades" value={summary?.total_trades ?? '—'} detail="Open + closed" tone="blue"/></> : <><MetricCard label="Closed trades" value={summary?.closed_count ?? positions.length} detail="Journal records" tone="blue"/><MetricCard label="Realized PnL" value={fmt(summary?.total_realized_pnl, 2)} detail="USDT" tone={Number(summary?.total_realized_pnl || 0) >= 0 ? 'green' : 'red'}/><MetricCard label="Win rate" value={`${fmt(summary?.win_rate, 1)}%`} detail={`${summary?.wins || 0} wins · ${summary?.losses || 0} losses`} tone="cyan"/><MetricCard label="Average PnL" value={fmt(summary?.avg_pnl, 2)} detail="Per closed trade" tone="violet"/></>}
         </div>
         {error && <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{error}</div>}
         <div className="grid min-h-[560px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -513,7 +524,8 @@ function KnowledgePage({ focusKey, onFocusHandled }) {
   )
 }
 
-function SettingsPage({ health, autoTrade, onAutoTradeChange }) {
+function SettingsPage({ health, autoTrade, onAutoTradeChange, user }) {
+  const isAdmin = user?.role === 'admin'
   const [settings, setSettings] = useState(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -535,18 +547,142 @@ function SettingsPage({ health, autoTrade, onAutoTradeChange }) {
         {message && <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs text-cyan-100">{message}</div>}
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="xora-panel rounded-2xl p-5"><div className="flex items-center gap-3"><div className="settings-icon"><Icon name="shield"/></div><div><div className="text-sm font-bold text-white">Execution safeguards</div><div className="mt-1 text-[11px] text-slate-500">Backend-owned settings</div></div></div><div className="mt-5 space-y-3">
-            <label className="setting-row"><div><div className="text-xs font-semibold text-slate-200">Auto demo execution</div><div className="mt-1 text-[10px] leading-4 text-slate-600">Still requires APPROVE + verified reference match.</div></div><input type="checkbox" checked={!!(settings?.auto_trade ?? autoTrade)} disabled={saving} onChange={(e) => patch({ auto_trade: e.target.checked })} className="h-4 w-4 accent-cyan-400"/></label>
-            <div className="setting-row"><div><div className="text-xs font-semibold text-slate-200">Trade mode</div><div className="mt-1 text-[10px] leading-4 text-slate-600">The current engine is demo-first; live adapter remains backend-controlled.</div></div><select value={settings?.trade_mode || health?.trade_mode || 'demo'} disabled={saving} onChange={(e) => patch({ trade_mode: e.target.value })} className="select-field"><option value="demo">Demo</option><option value="live">Live</option></select></div>
+            <label className="setting-row"><div><div className="text-xs font-semibold text-slate-200">Auto demo execution</div><div className="mt-1 text-[10px] leading-4 text-slate-600">Still requires APPROVE + verified reference match.</div></div><input type="checkbox" checked={!!(settings?.auto_trade ?? autoTrade)} disabled={saving || !isAdmin} title={isAdmin ? undefined : 'Admin only'} onChange={(e) => patch({ auto_trade: e.target.checked })} className="h-4 w-4 accent-cyan-400"/></label>
+            <div className="setting-row"><div><div className="text-xs font-semibold text-slate-200">Trade mode</div><div className="mt-1 text-[10px] leading-4 text-slate-600">The current engine is demo-first; live adapter remains backend-controlled.</div></div><select value={settings?.trade_mode || health?.trade_mode || 'demo'} disabled={saving || !isAdmin} onChange={(e) => patch({ trade_mode: e.target.value })} className="select-field"><option value="demo">Demo</option><option value="live">Live</option></select></div>
           </div></section>
           <section className="xora-panel rounded-2xl p-5"><div className="flex items-center gap-3"><div className="settings-icon"><Icon name="settings"/></div><div><div className="text-sm font-bold text-white">Interface</div><div className="mt-1 text-[11px] text-slate-500">This device only</div></div></div><div className="mt-5"><div className="text-xs font-semibold text-slate-200">Refresh density</div><div className="mt-3 grid grid-cols-3 gap-2">{[['calm', 'Calm'], ['standard', 'Standard'], ['fast', 'Fast']].map(([id, label]) => <button key={id} onClick={() => updateRefresh(id)} className={cx('filter-chip', refreshRate === id && 'filter-chip-active')}>{label}</button>)}</div><p className="mt-3 text-[10px] leading-5 text-slate-600">This preference is reserved for UI polling cadence and does not alter market discovery or trading decisions.</p></div></section>
           <section className="xora-panel rounded-2xl p-5 lg:col-span-2"><div className="text-sm font-bold text-white">System status</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[['Market feed', health?.market_live ? 'Live' : health?.ws_connected ? 'Warming' : 'Offline'], ['Tickers', health?.ws_tickers ?? '—'], ['Ready symbols', health?.ws_ready_symbols ?? '—'], ['Reference library', `${health?.reference_images ?? '—'} images`]].map(([label, value]) => <div key={label} className="rounded-xl border border-white/[.06] bg-black/10 p-3"><div className="text-[9px] uppercase tracking-[.14em] text-slate-600">{label}</div><div className="mt-1 text-sm font-semibold text-slate-200">{value}</div></div>)}</div></section>
+          <AccountSection user={user} />
+          {isAdmin && <UsersSection user={user} />}
         </div>
       </div>
     </div>
   )
 }
 
+function Notice({ message }) {
+  if (!message) return null
+  return <div className={cx('mt-3 rounded-xl border px-3 py-2 text-xs', message.error ? 'border-rose-500/20 bg-rose-500/10 text-rose-200' : 'border-cyan-500/20 bg-cyan-500/10 text-cyan-100')}>{message.text}</div>
+}
+
+function AccountSection({ user }) {
+  const [form, setForm] = useState({ current: '', next: '', confirm: '' })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState(null)
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  async function submit(e) {
+    e.preventDefault(); setMessage(null)
+    if (form.next !== form.confirm) { setMessage({ error: true, text: 'New passwords do not match' }); return }
+    setBusy(true)
+    try { await changePassword(form.current, form.next); setForm({ current: '', next: '', confirm: '' }); setMessage({ text: 'Password changed. Other devices were signed out.' }) }
+    catch (err) { setMessage({ error: true, text: err.message }) } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="xora-panel rounded-2xl p-5">
+      <div className="flex items-center gap-3"><div className="settings-icon"><Icon name="shield"/></div><div><div className="text-sm font-bold text-white">Your account</div><div className="mt-1 text-[11px] text-slate-500">Signed in as <span className="text-slate-300">{user?.username}</span> · {user?.role}</div></div></div>
+      <form onSubmit={submit} className="mt-5 grid gap-2">
+        <input type="password" autoComplete="current-password" placeholder="Current password" value={form.current} onChange={set('current')} className="input-field px-3" required />
+        <input type="password" autoComplete="new-password" placeholder="New password (min 8 characters)" value={form.next} onChange={set('next')} className="input-field px-3" minLength={8} required />
+        <input type="password" autoComplete="new-password" placeholder="Confirm new password" value={form.confirm} onChange={set('confirm')} className="input-field px-3" minLength={8} required />
+        <button className="btn-primary mt-1 justify-center" disabled={busy}>{busy ? 'Saving…' : 'Change password'}</button>
+      </form>
+      <Notice message={message} />
+    </section>
+  )
+}
+
+function UsersSection({ user }) {
+  const [users, setUsers] = useState([])
+  const [form, setForm] = useState({ username: '', password: '', role: 'user' })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState(null)
+  const load = useCallback(() => listUsers().then(setUsers).catch((err) => setMessage({ error: true, text: err.message })), [])
+  useEffect(() => { load() }, [load])
+
+  async function run(fn, ok) {
+    setBusy(true); setMessage(null)
+    try { await fn(); setMessage({ text: ok }); await load() } catch (err) { setMessage({ error: true, text: err.message }) } finally { setBusy(false) }
+  }
+  function add(e) {
+    e.preventDefault()
+    const name = form.username.trim()
+    run(async () => { await createUser(name, form.password, form.role); setForm({ username: '', password: '', role: 'user' }) }, `User ${name} created`)
+  }
+  function reset(name) {
+    const pw = window.prompt(`New password for ${name} (min 8 characters). This signs them out everywhere.`)
+    if (pw) run(() => resetUserPassword(name, pw), `Password reset for ${name}`)
+  }
+  function remove(name) {
+    if (window.confirm(`Delete user ${name}? This cannot be undone.`)) run(() => deleteUser(name), `User ${name} deleted`)
+  }
+
+  return (
+    <section className="xora-panel rounded-2xl p-5">
+      <div className="flex items-center gap-3"><div className="settings-icon"><Icon name="settings"/></div><div><div className="text-sm font-bold text-white">Users</div><div className="mt-1 text-[11px] text-slate-500">Admins manage settings and users; users can scan, review and trade.</div></div></div>
+      <div className="mt-4 space-y-2">{users.map((u) => (
+        <div key={u.username} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/[.06] bg-black/10 px-3 py-2">
+          <div className="min-w-0"><div className="flex items-center gap-2 truncate text-xs font-semibold text-slate-200">{u.username} <Badge tone={u.role === 'admin' ? 'violet' : 'neutral'}>{u.role}</Badge></div><div className="mt-1 text-[10px] text-slate-600">Last sign-in {u.last_login_at ? fmtDateTime(u.last_login_at) : 'never'}</div></div>
+          <div className="flex gap-2"><button type="button" onClick={() => reset(u.username)} disabled={busy} className="btn-secondary min-h-[32px] text-[11px]">Reset password</button>{u.username.toLowerCase() !== (user?.username || '').toLowerCase() && <button type="button" onClick={() => remove(u.username)} disabled={busy} className="btn-danger min-h-[32px] text-[11px]">Delete</button>}</div>
+        </div>
+      ))}</div>
+      <form onSubmit={add} className="mt-4 grid gap-2 sm:grid-cols-2">
+        <input placeholder="Username" autoComplete="off" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} className="input-field px-3" required minLength={3} />
+        <input type="password" autoComplete="new-password" placeholder="Password (min 8)" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} className="input-field px-3" required minLength={8} />
+        <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} className="select-field px-2"><option value="user">User</option><option value="admin">Admin</option></select>
+        <button className="btn-primary justify-center" disabled={busy}>Add user</button>
+      </form>
+      <Notice message={message} />
+    </section>
+  )
+}
+
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function submit(e) {
+    e.preventDefault(); setBusy(true); setError(null)
+    try { onLogin(await login(username.trim(), password)) } catch (err) { setError(err.message || 'Sign-in failed') } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="app-shell xora-grid min-h-screen items-center justify-center p-4">
+      <form onSubmit={submit} className="xora-panel w-full max-w-sm rounded-2xl p-6">
+        <Brand />
+        <h1 className="mt-6 text-xl font-bold text-white">Sign in</h1>
+        <p className="mt-1 text-xs text-slate-500">Access to XORA Chart AI is restricted to authorized users.</p>
+        <label className="mt-5 block text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500" htmlFor="xora-user">Username</label>
+        <input id="xora-user" autoComplete="username" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} className="input-field mt-1 w-full px-3" required />
+        <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500" htmlFor="xora-pass">Password</label>
+        <input id="xora-pass" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="input-field mt-1 w-full px-3" required />
+        {error && <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</div>}
+        <button className="btn-primary mt-5 w-full justify-center" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <a href="/" className="mt-4 block text-center text-[11px] text-slate-500 hover:text-slate-300">← Back to home</a>
+      </form>
+    </div>
+  )
+}
+
 export default function App() {
+  const [user, setUser] = useState(getUser())
+  const [checking, setChecking] = useState(true)
+
+  useEffect(() => {
+    const off = onAuthChange(setUser)
+    restoreSession().then(setUser).finally(() => setChecking(false))
+    return off
+  }, [])
+
+  if (checking) return <div className="app-shell xora-grid min-h-screen items-center justify-center text-xs text-slate-500">Connecting…</div>
+  if (!user) return <LoginPage onLogin={setUser} />
+  return <Dashboard user={user} />
+}
+
+function Dashboard({ user }) {
   const [page, setPage] = useState('scan')
   const [reviewOpp, setReviewOpp] = useState(null)
   const [knowledgeKey, setKnowledgeKey] = useState(null)
@@ -574,7 +710,7 @@ export default function App() {
       </aside>
 
       <div className="min-w-0 flex flex-1 flex-col">
-        <header className="topbar"><div className="mobile-brand"><Brand/></div><div className="hidden md:block"><div className="text-[9px] uppercase tracking-[0.16em] font-display text-xtinex-gold border-b-2 border-xtinex-gold/20 pb-1">XORA BY XTINEX</div><div className="mt-1 text-xs font-semibold text-slate-300">Reference-gated pattern analysis · {health?.trade_mode || 'demo'} execution</div></div><div className="ml-auto flex items-center gap-2"><div className={cx('status-pill', marketLive ? 'status-live' : 'status-warn')}><span className="h-1.5 w-1.5 rounded-full bg-current"/>{marketLive ? 'Market live' : health?.ws_connected ? 'Warming' : 'Offline'}</div><div className="hidden rounded-xl border border-white/[.06] bg-white/[.02] px-3 py-2 text-[10px] text-slate-500 sm:block">Refs <span className="font-mono text-slate-300">{health?.reference_images ?? '—'}</span></div></div></header>
+        <header className="topbar"><div className="mobile-brand"><Brand/></div><div className="hidden md:block"><div className="text-[9px] uppercase tracking-[0.16em] font-display text-xtinex-gold border-b-2 border-xtinex-gold/20 pb-1">XORA BY XTINEX</div><div className="mt-1 text-xs font-semibold text-slate-300">Reference-gated pattern analysis · {health?.trade_mode || 'demo'} execution</div></div><div className="ml-auto flex items-center gap-2"><div className="flex items-center gap-2 rounded-xl border border-white/[.06] bg-white/[.02] px-2.5 py-1.5"><span className="hidden text-[10px] text-slate-400 sm:inline">{user.username}</span><button onClick={() => logout()} className="text-[10px] font-semibold text-slate-300 hover:text-white" title="Sign out">Sign out</button></div><div className={cx('status-pill', marketLive ? 'status-live' : 'status-warn')}><span className="h-1.5 w-1.5 rounded-full bg-current"/>{marketLive ? 'Market live' : health?.ws_connected ? 'Warming' : 'Offline'}</div><div className="hidden rounded-xl border border-white/[.06] bg-white/[.02] px-3 py-2 text-[10px] text-slate-500 sm:block">Refs <span className="font-mono text-slate-300">{health?.reference_images ?? '—'}</span></div></div></header>
 
         <main className="min-h-0 flex-1">
           {page === 'scan' && <ScanPage health={health} onReview={openReview}/>} 
@@ -582,7 +718,7 @@ export default function App() {
           {page === 'active' && <PositionsPage mode="open" health={health}/>}
           {page === 'history' && <PositionsPage mode="closed" health={health}/>}
           {page === 'knowledge' && <KnowledgePage focusKey={knowledgeKey} onFocusHandled={() => setKnowledgeKey(null)}/>} 
-          {page === 'settings' && <SettingsPage health={health} autoTrade={autoTrade} onAutoTradeChange={changeAuto}/>} 
+          {page === 'settings' && <SettingsPage health={health} autoTrade={autoTrade} onAutoTradeChange={changeAuto} user={user}/>} 
         </main>
       </div>
 
