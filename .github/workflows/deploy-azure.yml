@@ -100,11 +100,13 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           XORA_LLM_ENABLED: ${{ secrets.XORA_LLM_ENABLED }}
+          XORA_SERVICE_KEY: ${{ secrets.XORA_SERVICE_KEY }}
         run: |
           set -euo pipefail
           : "${GROQ_API_KEY:?Missing GROQ_API_KEY repository secret}"
           : "${GEMINI_API_KEY:?Missing GEMINI_API_KEY repository secret}"
           : "${XORA_LLM_ENABLED:?Missing XORA_LLM_ENABLED repository secret}"
+          : "${XORA_SERVICE_KEY:?Missing XORA_SERVICE_KEY repository secret}"
           az webapp config appsettings set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_WEBAPP_NAME" \
@@ -112,6 +114,7 @@ jobs:
               "GROQ_API_KEY=$GROQ_API_KEY" \
               "GEMINI_API_KEY=$GEMINI_API_KEY" \
               "XORA_LLM_ENABLED=$XORA_LLM_ENABLED" \
+              "XORA_SERVICE_KEY=$XORA_SERVICE_KEY" \
               "XORA_LLM_PROVIDERS=groq,gemini" \
               "XORA_MAX_OPEN_POSITIONS=20" \
             --output none
